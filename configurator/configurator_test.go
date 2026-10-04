@@ -278,6 +278,100 @@ func configFromTOML(t *testing.T, contents string) (model.Config, error) {
 	return c.GetConfig()
 }
 
+func TestGetConfig_SSHHosts(t *testing.T) {
+	config, err := configFromTOML(t, `
+[ssh]
+hosts = ["myinventa", "bookstack"]
+`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"myinventa", "bookstack"}, config.SSH.Hosts)
+}
+
+func TestGetConfig_SSHHostsStrictMode(t *testing.T) {
+	config, err := configFromTOML(t, `
+strict_mode = true
+
+[ssh]
+hosts = ["myinventa"]
+`)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"myinventa"}, config.SSH.Hosts)
+}
+
+func TestGetConfig_EmptySSHHostListIsAllowed(t *testing.T) {
+	config, err := configFromTOML(t, `
+[ssh]
+hosts = []
+`)
+	require.NoError(t, err)
+	assert.Empty(t, config.SSH.Hosts)
+
+	config, err = configFromTOML(t, "")
+	require.NoError(t, err)
+	assert.Empty(t, config.SSH.Hosts)
+}
+
+func TestGetConfig_RejectsEmptyAndDuplicateSSHHosts(t *testing.T) {
+	tests := []struct {
+		name string
+		toml string
+	}{
+		{
+			name: "empty host",
+			toml: `
+[ssh]
+hosts = [""]
+`,
+		},
+		{
+			name: "duplicate host",
+			toml: `
+[ssh]
+hosts = ["myinventa", "myinventa"]
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := configFromTOML(t, tt.toml)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "ssh")
+		})
+	}
+}
+
+func TestGetConfig_SSHHostsAreRootOnly(t *testing.T) {
+	mainConfig := []byte(`
+import = ["/main/imported.toml"]
+
+[ssh]
+hosts = ["root-host"]
+`)
+	importConfig := []byte(`
+[ssh]
+hosts = ["imported-host"]
+
+[[session]]
+name = "imported-session"
+path = "/tmp/imported"
+`)
+	mockOs := &testOs{
+		homeDir: "/home/testuser",
+		files: map[string][]byte{
+			"/main/sesh.toml":     mainConfig,
+			"/main/imported.toml": importConfig,
+		},
+	}
+	c := NewConfiguratorWithPath(mockOs, pathwrap.NewPath(), &runtimewrap.MockRunTime{}, "/main/sesh.toml")
+
+	config, err := c.GetConfig()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"root-host"}, config.SSH.Hosts)
+	require.Len(t, config.SessionConfigs, 1)
+	assert.Equal(t, "imported-session", config.SessionConfigs[0].Name)
+}
+
 func TestGetConfig_AliasAutoConnectDelayDefault(t *testing.T) {
 	config, err := configFromTOML(t, "")
 	assert.NoError(t, err)

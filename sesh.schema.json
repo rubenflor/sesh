@@ -10,6 +10,23 @@
       "description": "Enable caching for improved performance",
       "default": false
     },
+    "ssh": {
+      "type": "object",
+      "description": "Explicit OpenSSH host aliases to probe for remote tmux sessions",
+      "properties": {
+        "hosts": {
+          "type": "array",
+          "description": "OpenSSH destination aliases to include in Sesh's SSH source",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
     "strict_mode": {
       "type": "boolean",
       "description": "Disallow unknown fields in the configuration file",

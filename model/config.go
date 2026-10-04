@@ -45,6 +45,7 @@ const (
 type (
 	Config struct {
 		Cache                   bool                 `toml:"cache"`
+		SSH                     SSHConfig            `toml:"ssh"`
 		StrictMode              bool                 `toml:"strict_mode"`
 		ImportPaths             []string             `toml:"import"`
 		DefaultSessionConfig    DefaultSessionConfig `toml:"default_session"`
@@ -64,6 +65,11 @@ type (
 		Browser                 BrowserConfig        `toml:"browser"`
 		Frecency                FrecencyConfig       `toml:"frecency"`
 		TUI                     TUIConfig            `toml:"tui"`
+	}
+	// SSHConfig lists the explicit OpenSSH destination aliases Sesh may probe.
+	// It is read from the root configuration and is not merged from imports.
+	SSHConfig struct {
+		Hosts []string `toml:"hosts"`
 	}
 	Evaluation struct {
 		StrictMode bool `toml:"strict_mode"`

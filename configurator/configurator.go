@@ -171,6 +171,20 @@ func validateAliases(config *model.Config) error {
 	return nil
 }
 
+func validateSSHHosts(config *model.Config) error {
+	seen := make(map[string]struct{}, len(config.SSH.Hosts))
+	for i, host := range config.SSH.Hosts {
+		if strings.TrimSpace(host) == "" {
+			return fmt.Errorf("ssh host entry %d must not be empty", i+1)
+		}
+		if _, exists := seen[host]; exists {
+			return fmt.Errorf("duplicate ssh host %q", host)
+		}
+		seen[host] = struct{}{}
+	}
+	return nil
+}
+
 // validateNameSubstitutions rejects rules that can't be applied so the user
 // hears about a bad rule at load time instead of getting silently ignored
 // naming later. A rule needs something to look for, and a regex rule needs a
@@ -210,6 +224,9 @@ func (c *RealConfigurator) getConfigFileFromPath(configPath string) (model.Confi
 	}
 
 	c.applyDefaults(&config)
+	if err := validateSSHHosts(&config); err != nil {
+		return config, err
+	}
 	if err := validateAliases(&config); err != nil {
 		return config, err
 	}
@@ -248,6 +265,9 @@ func (c *RealConfigurator) getConfigFileFromUserConfigDir() (model.Config, error
 	}
 
 	c.applyDefaults(&config)
+	if err := validateSSHHosts(&config); err != nil {
+		return config, err
+	}
 	if err := validateAliases(&config); err != nil {
 		return config, err
 	}
