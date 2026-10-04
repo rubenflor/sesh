@@ -79,7 +79,12 @@ type Deps struct {
 
 // NewBaseDeps constructs all config-free dependencies.
 func NewBaseDeps() *BaseDeps {
-	exec := execwrap.NewExec()
+	return NewBaseDepsWithExec(execwrap.NewExec())
+}
+
+// NewBaseDepsWithExec constructs config-free dependencies with an injected
+// process runner, which keeps external command behavior testable.
+func NewBaseDepsWithExec(exec execwrap.Exec) *BaseDeps {
 	os := oswrap.NewOs()
 	path := pathwrap.NewPath()
 	runtime := runtimewrap.NewRunTime()
