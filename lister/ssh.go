@@ -27,6 +27,17 @@ type sshHostResult struct {
 	err      error
 }
 
+func listSSH(l *RealLister, ctx context.Context, failWhenAllHostsFail bool) (model.SeshSessions, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	results, err := discoverSSHHosts(ctx, l.exec, l.config.SSH.Hosts)
+	if err != nil {
+		return model.SeshSessions{}, err
+	}
+	return aggregateSSHHostResults(results, failWhenAllHostsFail)
+}
+
 func probeSSHHost(ctx context.Context, runner execwrap.Exec, host string) (model.SeshSessions, error) {
 	result, err := runner.RunContext(
 		ctx,

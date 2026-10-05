@@ -91,9 +91,10 @@ func TestGroupSources(t *testing.T) {
 
 func TestSrcs(t *testing.T) {
 	tests := []struct {
-		name     string
-		expected []string
-		opts     ListOptions
+		name          string
+		expected      []string
+		opts          ListOptions
+		sshConfigured bool
 	}{
 		{
 			name:     "All options are false",
@@ -155,12 +156,51 @@ func TestSrcs(t *testing.T) {
 			opts:     ListOptions{Panes: true, Tmux: true, Config: true, Zoxide: true, Tmuxinator: true},
 			expected: []string{"tmux", "config", "tmuxinator", "zoxide", "tmux-pane"},
 		},
+		{
+			name:          "Configured SSH joins the default sources",
+			sshConfigured: true,
+			expected:      []string{"tmux", "config", "tmuxinator", "zoxide", "ssh"},
+		},
+		{
+			name:          "Configured SSH does not join a local source filter",
+			sshConfigured: true,
+			opts:          ListOptions{Tmux: true},
+			expected:      []string{"tmux"},
+		},
+		{
+			name:     "Only SSH is true",
+			opts:     ListOptions{SSH: true},
+			expected: []string{"ssh"},
+		},
+		{
+			name:          "SSH and local filters select their union",
+			sshConfigured: true,
+			opts:          ListOptions{SSH: true, Tmux: true, Config: true},
+			expected:      []string{"tmux", "config", "ssh"},
+		},
+		{
+			name:     "Panes with SSH",
+			opts:     ListOptions{Panes: true, SSH: true},
+			expected: []string{"tmux-pane", "ssh"},
+		},
+		{
+			name:     "All source filters including SSH",
+			opts:     ListOptions{Tmux: true, Config: true, Tmuxinator: true, Zoxide: true, Panes: true, SSH: true},
+			expected: []string{"tmux", "config", "tmuxinator", "zoxide", "tmux-pane", "ssh"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := srcs(tt.opts)
+			result := srcs(tt.opts, tt.sshConfigured)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestSourceSetSSH(t *testing.T) {
+	assert.Nil(t, sourceSet(ListOptions{}))
+	assert.Equal(t, map[string]bool{"tmux": true}, sourceSet(ListOptions{Tmux: true}))
+	assert.Equal(t, map[string]bool{"ssh": true}, sourceSet(ListOptions{SSH: true}))
+	assert.Equal(t, map[string]bool{"tmux": true, "ssh": true}, sourceSet(ListOptions{Tmux: true, SSH: true}))
 }

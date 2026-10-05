@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/joshmedeski/sesh/v2/cache"
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/formatter"
 	"github.com/joshmedeski/sesh/v2/github"
 	"github.com/joshmedeski/sesh/v2/home"
@@ -35,6 +36,7 @@ type RealLister struct {
 	tmuxinator tmuxinator.Tmuxinator
 	formatter  formatter.Formatter
 	issues     *cache.Namespace[github.Issue]
+	exec       execwrap.Exec
 
 	// wildcards caches config.WildcardConfigs with their patterns expanded, so
 	// resolving a wildcard for every session in a list expands each pattern
@@ -51,6 +53,7 @@ func NewLister(
 	tmuxinator tmuxinator.Tmuxinator,
 	formatter formatter.Formatter,
 	issues *cache.Namespace[github.Issue],
+	exec execwrap.Exec,
 ) Lister {
 	return &RealLister{
 		config:     config,
@@ -60,5 +63,6 @@ func NewLister(
 		tmuxinator: tmuxinator,
 		formatter:  formatter,
 		issues:     issues,
+		exec:       exec,
 	}
 }

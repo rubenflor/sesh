@@ -1,15 +1,213 @@
 package lister
 
 import (
+	"context"
+	"errors"
 	"testing"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/home"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/tmux"
 	"github.com/joshmedeski/sesh/v2/tmuxinator"
 	"github.com/joshmedeski/sesh/v2/zoxide"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestListSSHConfiguredDefault(t *testing.T) {
+	runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte("0\nnutiliti/2345\n")}}
+	config := model.Config{SSH: model.SSHConfig{Hosts: []string{"myinventa"}}}
+	l := newSSHListTestLister(t, config, runner)
+
+	sessions, err := l.List(ListOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"tmux:local", "tmuxinator:project", "zoxide:frequent", "ssh:ssh/myinventa/0", "ssh:ssh/myinventa/nutiliti%2F2345"}, sessions.OrderedIndex)
+	assert.Equal(t, model.SeshSession{Src: "ssh", Name: "ssh/myinventa/0", Group: 4}, sessions.Directory["ssh:ssh/myinventa/0"])
+	assert.Equal(t, "ssh", runner.name)
+}
+
+func TestListSSHAbsentOrEmptyPreservesLocalDefaults(t *testing.T) {
+	for name, hosts := range map[string][]string{"absent": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte("unexpected\n")}}
+			l := newSSHListTestLister(t, model.Config{SSH: model.SSHConfig{Hosts: hosts}}, runner)
+
+			sessions, err := l.List(ListOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, []string{"tmux:local", "tmuxinator:project", "zoxide:frequent"}, sessions.OrderedIndex)
+			assert.Equal(t, model.SeshSession{Src: "tmux", Name: "local", Path: "/local"}, sessions.Directory["tmux:local"])
+			assert.Equal(t, model.SeshSession{Src: "tmuxinator", Name: "project", Group: 2}, sessions.Directory["tmuxinator:project"])
+			assert.Equal(t, model.SeshSession{Src: "zoxide", Name: "frequent", Path: "/frequent", Score: 10, Group: 3}, sessions.Directory["zoxide:frequent"])
+			assert.Empty(t, runner.name, "local defaults must not execute SSH")
+		})
+	}
+}
+
+func TestListSSHSourceFilters(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		opts ListOptions
+		want []string
+	}{
+		{"tmux only", ListOptions{Tmux: true}, []string{"tmux:local"}},
+		{"config only", ListOptions{Config: true}, []string{}},
+		{"tmuxinator only", ListOptions{Tmuxinator: true}, []string{"tmuxinator:project"}},
+		{"zoxide only", ListOptions{Zoxide: true}, []string{"zoxide:frequent"}},
+		{"local union", ListOptions{Tmux: true, Zoxide: true}, []string{"tmux:local", "zoxide:frequent"}},
+		{"SSH only", ListOptions{SSH: true}, []string{"ssh:ssh/server/0"}},
+		{"SSH and tmux", ListOptions{SSH: true, Tmux: true}, []string{"tmux:local", "ssh:ssh/server/0"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte("0\n")}}
+			l := newSSHListTestLister(t, model.Config{SSH: model.SSHConfig{Hosts: []string{"server"}}}, runner)
+
+			sessions, err := l.List(tt.opts)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, sessions.OrderedIndex)
+			if tt.opts.SSH {
+				assert.Equal(t, "ssh", runner.name)
+			} else {
+				assert.Empty(t, runner.name, "local filters must not execute SSH")
+			}
+		})
+	}
+}
+
+func TestListSSHConfiguredOrderAndSortOrder(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		config model.SortOrder
+		opts   model.SortOrder
+		want   []string
+		groups []int
+	}{
+		{"flat", model.SortOrder{"SSH", "tmux"}, nil,
+			[]string{"ssh:ssh/first/z", "ssh:ssh/first/a", "ssh:ssh/second/0", "tmux:local"}, []int{0, 0, 0, 1}},
+		{"merged", model.SortOrder{[]string{"ssh", "tmux"}}, nil,
+			[]string{"ssh:ssh/first/z", "ssh:ssh/first/a", "ssh:ssh/second/0", "tmux:local"}, []int{0, 0, 0, 0}},
+		{"option overrides config", model.SortOrder{"ssh", "tmux"}, model.SortOrder{"tmux", "ssh"},
+			[]string{"tmux:local", "ssh:ssh/first/z", "ssh:ssh/first/a", "ssh:ssh/second/0"}, []int{0, 1, 1, 1}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hosts := []string{"first", "second"}
+			runner := newControlledSSHExec(hosts)
+			runner.release["first"] = make(chan struct{})
+			runner.responses["first"] = execResponse{result: execwrap.CommandResult{Stdout: []byte("z\na\n")}}
+			runner.responses["second"] = execResponse{result: execwrap.CommandResult{Stdout: []byte("0\n")}}
+			l := newSSHListTestLister(t, model.Config{SSH: model.SSHConfig{Hosts: hosts}, SortOrder: tt.config}, runner)
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			type result struct {
+				sessions model.SeshSessions
+				err      error
+			}
+			done := make(chan result, 1)
+			go func() {
+				sessions, err := l.List(ListOptions{Context: ctx, SSH: true, Tmux: true, SortOrder: tt.opts})
+				done <- result{sessions, err}
+			}()
+
+			// The second host completes before the first is released.
+			require.Equal(t, "second", waitSSHEvent(t, runner.completed))
+			close(runner.release["first"])
+			got := waitSSHEvent(t, done)
+			require.NoError(t, got.err)
+			assert.Equal(t, tt.want, got.sessions.OrderedIndex)
+			for i, key := range got.sessions.OrderedIndex {
+				assert.Equal(t, tt.groups[i], got.sessions.Directory[key].Group)
+			}
+		})
+	}
+}
+
+func TestListSSHFailureAggregation(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		opts      ListOptions
+		responses map[string]execResponse
+		want      []string
+		wantError bool
+	}{
+		{"default all failed", ListOptions{}, map[string]execResponse{
+			"first": {err: errors.New("offline")}, "second": {err: errors.New("offline")},
+		}, []string{"tmux:local", "tmuxinator:project", "zoxide:frequent"}, false},
+		{"mixed partial failure", ListOptions{Tmux: true, SSH: true}, map[string]execResponse{
+			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{Stdout: []byte("0\n")}},
+		}, []string{"tmux:local", "ssh:ssh/second/0"}, false},
+		{"SSH partial failure", ListOptions{SSH: true}, map[string]execResponse{
+			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{Stdout: []byte("0\n")}},
+		}, []string{"ssh:ssh/second/0"}, false},
+		{"SSH successful empty host", ListOptions{SSH: true}, map[string]execResponse{
+			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{}},
+		}, []string{}, false},
+		{"SSH all failed", ListOptions{SSH: true}, map[string]execResponse{
+			"first": {err: errors.New("offline")}, "second": {err: errors.New("offline")},
+		}, nil, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			hosts := []string{"first", "second"}
+			runner := newControlledSSHExec(hosts)
+			runner.responses = tt.responses
+			l := newSSHListTestLister(t, model.Config{SSH: model.SSHConfig{Hosts: hosts}}, runner)
+
+			sessions, err := l.List(tt.opts)
+			if tt.wantError {
+				require.ErrorContains(t, err, "all configured SSH hosts failed")
+				assert.Contains(t, err.Error(), "first")
+				assert.Contains(t, err.Error(), "second")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, sessions.OrderedIndex)
+		})
+	}
+}
+
+func TestListSSHCancellation(t *testing.T) {
+	hosts := []string{"first", "second"}
+	runner := newControlledSSHExec(hosts)
+	runner.blockOnContext = true
+	l := newSSHListTestLister(t, model.Config{SSH: model.SSHConfig{Hosts: hosts}}, runner)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		_, err := l.List(ListOptions{Context: ctx})
+		done <- err
+	}()
+	started := []string{waitSSHEvent(t, runner.started), waitSSHEvent(t, runner.started)}
+	require.ElementsMatch(t, hosts, started)
+	cancel()
+	require.ErrorIs(t, waitSSHEvent(t, done), context.Canceled)
+	for range hosts {
+		assert.ErrorIs(t, waitSSHEvent(t, runner.stopped).err, context.Canceled)
+	}
+	assert.ElementsMatch(t, hosts, []string{waitSSHEvent(t, runner.completed), waitSSHEvent(t, runner.completed)})
+}
+
+func TestListSSHOnlyWithoutHosts(t *testing.T) {
+	runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte("unexpected\n")}}
+	l := newSSHListTestLister(t, model.Config{}, runner)
+	sessions, err := l.List(ListOptions{SSH: true})
+	require.NoError(t, err)
+	assert.Empty(t, sessions.OrderedIndex)
+	assert.Empty(t, sessions.Directory)
+	assert.Empty(t, runner.name, "an empty host list must not execute SSH")
+}
+
+func newSSHListTestLister(t *testing.T, config model.Config, runner execwrap.Exec) Lister {
+	t.Helper()
+	mockTmux := new(tmux.MockTmux)
+	mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: "local", Path: "/local"}}, nil)
+	mockTmuxinator := new(tmuxinator.MockTmuxinator)
+	mockTmuxinator.On("List").Return([]*model.TmuxinatorConfig{{Name: "project"}}, nil)
+	mockZoxide := new(zoxide.MockZoxide)
+	mockZoxide.On("ListResults").Return([]*model.ZoxideResult{{Path: "/frequent", Score: 10}}, nil)
+	mockHome := new(home.MockHome)
+	mockHome.On("ShortenHome", "/frequent").Return("frequent", nil)
+	return NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil, runner)
+}
 
 func TestHideDuplicates(t *testing.T) {
 	tests := []struct {
@@ -153,7 +351,7 @@ func TestHideDuplicates(t *testing.T) {
 				SessionConfigs: tt.configSessions,
 			}
 
-			lister := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil)
+			lister := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil, nil)
 
 			// Call the actual List function with HideDuplicates
 			result, err := lister.List(ListOptions{
@@ -196,7 +394,7 @@ func TestHideAttachedBeforeHideDuplicates(t *testing.T) {
 	config := model.Config{
 		SessionConfigs: []model.SessionConfig{{Name: "project", Path: "/p"}},
 	}
-	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil)
+	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil, nil)
 
 	result, err := l.List(ListOptions{
 		Tmux:           true,
@@ -271,7 +469,7 @@ func TestBlacklistedFlag(t *testing.T) {
 			mockTmux.On("ListSessions").Return(tt.tmuxSessions, nil)
 
 			config := model.Config{Blacklist: tt.blacklist}
-			lister := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil)
+			lister := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil, nil)
 
 			result, err := lister.List(ListOptions{
 				Tmux:        true,
@@ -296,7 +494,7 @@ func TestList_ShowWindows(t *testing.T) {
 	newLister := func(showWindows bool, mockTmux *tmux.MockTmux) Lister {
 		config := model.Config{}
 		config.TUI.ShowWindows = showWindows
-		return NewLister(config, new(home.MockHome), mockTmux, new(zoxide.MockZoxide), new(tmuxinator.MockTmuxinator), nil, nil)
+		return NewLister(config, new(home.MockHome), mockTmux, new(zoxide.MockZoxide), new(tmuxinator.MockTmuxinator), nil, nil, nil)
 	}
 
 	t.Run("attaches window names when enabled", func(t *testing.T) {
@@ -367,7 +565,7 @@ func TestMergedSortOrderGroup(t *testing.T) {
 		},
 		SortOrder: model.SortOrder{"tmux", []string{"config", "zoxide"}},
 	}
-	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil)
+	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil, nil)
 
 	result, err := l.List(ListOptions{Tmux: true, Config: true, Zoxide: true})
 	assert.NoError(t, err)
@@ -404,7 +602,7 @@ func TestListOptionsSortOrderOverridesConfig(t *testing.T) {
 		SessionConfigs: []model.SessionConfig{{Name: "notes-cfg", Path: "/hot"}},
 		SortOrder:      model.SortOrder{"zoxide", "config", "tmux"},
 	}
-	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil)
+	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil, nil)
 
 	result, err := l.List(ListOptions{
 		Tmux: true, Config: true, Zoxide: true,
@@ -438,7 +636,7 @@ func TestFlatSortOrderKeepsSourceBlocks(t *testing.T) {
 		SessionConfigs: []model.SessionConfig{{Name: "never-cfg", Path: "/never"}},
 		SortOrder:      model.SortOrder{"config", "zoxide"},
 	}
-	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil)
+	l := NewLister(config, mockHome, mockTmux, mockZoxide, mockTmuxinator, nil, nil, nil)
 
 	result, err := l.List(ListOptions{Config: true, Zoxide: true})
 	assert.NoError(t, err)

@@ -138,7 +138,7 @@ func (b *BaseDeps) BuildAll(configPath string) (*Deps, error) {
 	issueCache := cache.NewNamespace[github.Issue](
 		worktree.IssueCacheName, worktree.IssueCacheVersion, worktree.IssueCacheTTL,
 	).WithMissingTTL(worktree.IssueCacheMissingTTL)
-	li := lister.NewLister(config, b.Home, t, b.Zoxide, b.Tmuxinator, fm, issueCache)
+	li := lister.NewLister(config, b.Home, t, b.Zoxide, b.Tmuxinator, fm, issueCache, b.Exec)
 
 	var usedLister lister.Lister = li
 	var cachedLi *lister.CachingLister

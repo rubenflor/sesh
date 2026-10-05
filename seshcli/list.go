@@ -48,6 +48,7 @@ func NewListCommand(base *BaseDeps) *cobra.Command {
 			}
 
 			sessions, err := deps.Lister.List(lister.ListOptions{
+				Context:        cmd.Context(),
 				Config:         config,
 				HideAttached:   hideAttached,
 				Icons:          icons,

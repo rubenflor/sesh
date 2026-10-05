@@ -30,6 +30,7 @@ func NewPickerCommand(base *BaseDeps) *cobra.Command {
 			hideDuplicates, _ := cmd.Flags().GetBool("hide-duplicates")
 
 			listerOpts := lister.ListOptions{
+				Context:        cmd.Context(),
 				Config:         config,
 				HideAttached:   hideAttached,
 				Tmux:           tmux,

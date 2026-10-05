@@ -2,6 +2,7 @@ package lister
 
 import (
 	"cmp"
+	"context"
 	"slices"
 	"sync"
 
@@ -10,6 +11,8 @@ import (
 
 type (
 	ListOptions struct {
+		// Context cancels SSH discovery. Nil uses context.Background().
+		Context        context.Context
 		Config         bool
 		HideAttached   bool
 		Icons          bool
@@ -18,6 +21,7 @@ type (
 		Tmux           bool
 		Zoxide         bool
 		Tmuxinator     bool
+		SSH            bool
 		HideDuplicates bool
 		Panes          bool
 		Blacklisted    bool
@@ -35,14 +39,6 @@ type strategyResult struct {
 	err      error
 }
 
-var srcStrategies = map[string]srcStrategy{
-	"tmux":       listTmux,
-	"config":     listConfig,
-	"tmuxinator": listTmuxinator,
-	"zoxide":     listZoxide,
-	"tmux-pane":  listTmuxPanes,
-}
-
 func (l *RealLister) List(opts ListOptions) (model.SeshSessions, error) {
 	fullDirectory := make(model.SeshSessionMap)
 	fullOrderedIndex := make([]string, 0)
@@ -51,8 +47,18 @@ func (l *RealLister) List(opts ListOptions) (model.SeshSessions, error) {
 	if opts.SortOrder != nil {
 		sortOrder = opts.SortOrder
 	}
-	srcGroups := groupSources(srcs(opts), sortOrder)
+	srcGroups := groupSources(srcs(opts, len(l.config.SSH.Hosts) > 0), sortOrder)
 	srcsOrderedIndex := slices.Concat(srcGroups...)
+	srcStrategies := map[string]srcStrategy{
+		"tmux":       listTmux,
+		"config":     listConfig,
+		"tmuxinator": listTmuxinator,
+		"zoxide":     listZoxide,
+		"tmux-pane":  listTmuxPanes,
+		"ssh": func(l *RealLister) (model.SeshSessions, error) {
+			return listSSH(l, opts.Context, len(srcsOrderedIndex) == 1)
+		},
+	}
 
 	resultsChan := make(chan strategyResult, len(srcsOrderedIndex))
 	var wg sync.WaitGroup

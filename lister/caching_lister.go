@@ -32,7 +32,7 @@ func NewCachingLister(inner Lister, c cache.Cache) *CachingLister {
 func (cl *CachingLister) List(opts ListOptions) (model.SeshSessions, error) {
 	// Always fetch/store the full list (all sources, no dedup, no hide);
 	// we apply all view-level filters ourselves after cache read.
-	innerOpts := ListOptions{}
+	innerOpts := ListOptions{Context: opts.Context}
 
 	cached, err := cl.cache.Read()
 	if err == nil {
@@ -126,7 +126,7 @@ func (cl *CachingLister) applyFilters(sessions model.SeshSessions, opts ListOpti
 // sourceSet returns a set of allowed source names based on opts, or nil if
 // no source flags are set (meaning all sources are allowed).
 func sourceSet(opts ListOptions) map[string]bool {
-	if !opts.Tmux && !opts.Config && !opts.Zoxide && !opts.Tmuxinator && !opts.Panes {
+	if !opts.Tmux && !opts.Config && !opts.Zoxide && !opts.Tmuxinator && !opts.Panes && !opts.SSH {
 		return nil
 	}
 	m := make(map[string]bool)
@@ -144,6 +144,9 @@ func sourceSet(opts ListOptions) map[string]bool {
 	}
 	if opts.Panes {
 		m["tmux-pane"] = true
+	}
+	if opts.SSH {
+		m["ssh"] = true
 	}
 	return m
 }

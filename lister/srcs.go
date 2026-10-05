@@ -83,7 +83,7 @@ func singletonGroups(sources []string) [][]string {
 	return groups
 }
 
-func srcs(opts ListOptions) []string {
+func srcs(opts ListOptions, sshConfigured bool) []string {
 	count := 0
 	if opts.Tmux {
 		count++
@@ -100,8 +100,15 @@ func srcs(opts ListOptions) []string {
 	if opts.Panes {
 		count++
 	}
+	if opts.SSH {
+		count++
+	}
 	if count == 0 {
-		return []string{"tmux", "config", "tmuxinator", "zoxide"}
+		sources := []string{"tmux", "config", "tmuxinator", "zoxide"}
+		if sshConfigured {
+			sources = append(sources, "ssh")
+		}
+		return sources
 	}
 	srcs := make([]string, 0, count)
 	if opts.Tmux {
@@ -118,6 +125,9 @@ func srcs(opts ListOptions) []string {
 	}
 	if opts.Panes {
 		srcs = append(srcs, "tmux-pane")
+	}
+	if opts.SSH {
+		srcs = append(srcs, "ssh")
 	}
 	return srcs
 }

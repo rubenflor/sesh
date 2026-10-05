@@ -42,7 +42,7 @@ func TestWorktreeResolver_NilWithoutWorktrees(t *testing.T) {
 }
 
 func TestFormatJsonResolvesWorktree(t *testing.T) {
-	l := NewLister(worktreeTestConfig(), iconTestHome(t), nil, nil, nil, nil, nil)
+	l := NewLister(worktreeTestConfig(), iconTestHome(t), nil, nil, nil, nil, nil, nil)
 	sessions := model.SeshSessions{
 		OrderedIndex: []string{"zoxide:409", "zoxide:other"},
 		Directory: model.SeshSessionMap{

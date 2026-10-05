@@ -1,6 +1,7 @@
 package lister_test
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -52,6 +53,20 @@ func TestCachingLister_ColdStart(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sessions.OrderedIndex, cached.Sessions.OrderedIndex)
 
+	cl.Wait()
+}
+
+func TestCachingLister_ColdStartPreservesContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	fc := cache.NewFileCacheWithPath(filepath.Join(t.TempDir(), "sessions.gob"))
+	inner := lister.NewMockLister(t)
+	inner.On("List", lister.ListOptions{Context: ctx}).Return(fakeSessions(), nil).Once()
+	cl := lister.NewCachingLister(inner, fc)
+
+	got, err := cl.List(lister.ListOptions{Context: ctx, Tmux: true})
+	require.NoError(t, err)
+	assert.Equal(t, fakeSessions().OrderedIndex, got.OrderedIndex)
 	cl.Wait()
 }
 
