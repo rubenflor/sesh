@@ -40,6 +40,13 @@ func newConnectCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*D
 			root, _ := cmd.Flags().GetBool("root")
 
 			if root {
+				rootTarget := deps.Icon.RemoveIcon(name)
+				if strings.HasPrefix(rootTarget, "ssh/") {
+					if _, _, err := model.ParseSSHIdentity(rootTarget); err != nil {
+						return err
+					}
+					return errors.New("--root is not supported for SSH sessions")
+				}
 				hasRootDir, rootDir := base.Dir.RootDir(name)
 				if hasRootDir {
 					name = rootDir

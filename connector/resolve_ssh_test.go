@@ -117,6 +117,17 @@ func TestConnectWindowRejectsSSHAsLocalTarget(t *testing.T) {
 	require.ErrorContains(t, err, `"ssh/host/0" is an SSH session, not a local tmux session`)
 }
 
+func TestConnectSSHRejectsCommandBeforeTmuxAccess(t *testing.T) {
+	for _, switchFlag := range []bool{false, true} {
+		c := sshResolver(t, model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}})
+
+		result, err := c.Connect("ssh/host/0", model.ConnectOpts{Command: "echo hello", Switch: switchFlag})
+
+		require.EqualError(t, err, "--command is not supported for SSH sessions")
+		assert.Empty(t, result)
+	}
+}
+
 func TestResolveAliasToSSHValidatesCanonicalTarget(t *testing.T) {
 	tests := []struct {
 		identity, wantError string

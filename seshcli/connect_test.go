@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/joshmedeski/sesh/v2/connector"
+	"github.com/joshmedeski/sesh/v2/dir"
 	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/focuser"
 	"github.com/joshmedeski/sesh/v2/icon"
@@ -15,6 +17,61 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
+
+func TestConnectSSHRejectsUnsupportedFlagsBeforeLocalOperations(t *testing.T) {
+	for _, flags := range [][]string{
+		{"--command", "echo hello"},
+		{"--command", "echo hello", "--switch"},
+		{"--root"},
+		{"--root", "--switch"},
+	} {
+		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			config := model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}}
+			// No expectations: any local path or tmux operation fails immediately.
+			base := BaseDeps{Dir: dir.NewMockDir(t)}
+			deps := &Deps{BaseDeps: base, Config: config, Icon: icon.NewIcon(config)}
+			deps.Connector = connector.NewConnector(config,
+				base.Dir, nil, nil, nil, nil, tmux.NewMockTmux(t), nil, nil, nil,
+			)
+			cmd := newConnectCommand(&base, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetArgs(append(flags, "ssh/host/0"))
+
+			require.EqualError(t, cmd.Execute(), flags[0]+" is not supported for SSH sessions")
+		})
+	}
+}
+
+func TestConnectRootPreservesLocalPathResolution(t *testing.T) {
+	base := BaseDeps{Dir: dir.NewMockDir(t)}
+	base.Dir.(*dir.MockDir).EXPECT().RootDir("/repo/subdir").Return(true, "/repo").Once()
+	mConnector := connector.NewMockConnector(t)
+	mConnector.EXPECT().Connect("/repo", model.ConnectOpts{Switch: true}).Return("connected", nil).Once()
+	deps := &Deps{BaseDeps: base, Connector: mConnector, Icon: icon.NewIcon(model.Config{})}
+	cmd := newConnectCommand(&base, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
+	cmd.SetArgs([]string{"--root", "--switch", "/repo/subdir"})
+
+	require.NoError(t, cmd.Execute())
+}
+
+func TestConnectRootRejectsSSHBeforePathResolution(t *testing.T) {
+	for _, tt := range []struct{ target, wantError string }{
+		{" ssh/host/work%2F1", "--root is not supported for SSH sessions"},
+		{"ssh/host/work%2f1", "non-canonical encoding"},
+	} {
+		t.Run(tt.target, func(t *testing.T) {
+			base := BaseDeps{Dir: dir.NewMockDir(t)}
+			deps := &Deps{Connector: connector.NewMockConnector(t), Icon: icon.NewIcon(model.Config{})}
+			cmd := newConnectCommand(&base, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
+			cmd.SilenceUsage = true
+			cmd.SilenceErrors = true
+			cmd.SetArgs([]string{"--root", tt.target})
+
+			require.ErrorContains(t, cmd.Execute(), tt.wantError)
+		})
+	}
+}
 
 func TestJSONNamePassedUnchangedToConnectSwitch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

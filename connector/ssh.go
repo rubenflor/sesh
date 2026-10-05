@@ -2,6 +2,7 @@ package connector
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -27,6 +28,9 @@ func sshStrategy(c *RealConnector, name string) (model.Connection, error) {
 }
 
 func connectToSSH(c *RealConnector, connection model.Connection, opts model.ConnectOpts) (string, error) {
+	if opts.Command != "" {
+		return "", errors.New("--command is not supported for SSH sessions")
+	}
 	identity := connection.Session.Name
 	if opts.Switch {
 		clients, err := c.tmux.ListClients()
