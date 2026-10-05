@@ -36,6 +36,9 @@ func (c *RealConnector) ensureSession(name string) (model.SeshSession, error) {
 	if connection.Session.Src == "tmux-pane" {
 		return model.SeshSession{}, fmt.Errorf("'%s' is a pane, not a session", name)
 	}
+	if connection.Session.Src == "ssh" {
+		return model.SeshSession{}, fmt.Errorf("%q is an SSH session, not a local tmux session", name)
+	}
 	if connection.AddToZoxide {
 		c.zoxide.Add(connection.Session.Path)
 	}

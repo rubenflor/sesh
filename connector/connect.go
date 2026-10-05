@@ -2,6 +2,7 @@ package connector
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/joshmedeski/sesh/v2/model"
 )
@@ -11,6 +12,7 @@ import (
 // TODO: make it configurable to disable certain strategies (including flags for optimized fzf commands)
 // sesh connect --config (sesh list --config | fzf)
 var strategies = []func(*RealConnector, string) (model.Connection, error){
+	sshStrategy,
 	tmuxPaneStrategy,
 	tmuxStrategy,
 	tmuxinatorStrategy,
@@ -24,7 +26,9 @@ var strategies = []func(*RealConnector, string) (model.Connection, error){
 // touching tmux. Window and pane connects share it so they identify a session
 // exactly the way `sesh connect` does.
 func (c *RealConnector) Resolve(name string) (model.Connection, error) {
-	name = c.resolveAlias(name)
+	if !strings.HasPrefix(name, "ssh/") {
+		name = c.resolveAlias(name)
+	}
 	for _, strategy := range strategies {
 		connection, err := strategy(c, name)
 		if err != nil {
@@ -56,11 +60,15 @@ func (c *RealConnector) Connect(name string, opts model.ConnectOpts) (string, er
 	if !connection.Found {
 		return "", fmt.Errorf("no connection found for '%s'", name)
 	}
+	connect, exists := connectStrategy[connection.Session.Src]
+	if !exists {
+		return "", fmt.Errorf("no connector for source %q", connection.Session.Src)
+	}
 
 	// TODO: allow CLI flag to disable zoxide and overwrite all settings?
 	// sesh connect --ignore-zoxide "dotfiles"
 	if connection.AddToZoxide {
 		c.zoxide.Add(connection.Session.Path)
 	}
-	return connectStrategy[connection.Session.Src](c, connection, opts)
+	return connect(c, connection, opts)
 }
