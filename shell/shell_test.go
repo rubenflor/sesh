@@ -116,10 +116,10 @@ func TestShellShellCmd(t *testing.T) {
 
 func TestShellQuote(t *testing.T) {
 	t.Run("wraps plain values in single quotes", func(t *testing.T) {
-		assert.Equal(t, "'hello'", shellQuote("hello"))
+		assert.Equal(t, "'hello'", Quote("hello"))
 	})
 
 	t.Run("escapes embedded single quotes", func(t *testing.T) {
-		assert.Equal(t, `'it'\''s'`, shellQuote("it's"))
+		assert.Equal(t, `'it'\''s'`, Quote("it's"))
 	})
 }

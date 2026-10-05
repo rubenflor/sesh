@@ -159,17 +159,17 @@ func userShell() string {
 	return "sh"
 }
 
-// shellQuote wraps s in single quotes so it is treated as one literal shell
+// Quote wraps s in single quotes so it is treated as one literal shell
 // argument, escaping any single quotes it contains. This is the standard
 // POSIX-shell-safe quoting technique: close the quote, emit an escaped
 // quote, reopen the quote.
-func shellQuote(s string) string {
+func Quote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (c *RealShell) ShellCmd(cmd string, replacements map[string]string) (string, error) {
 	for placeholder, value := range replacements {
-		cmd = strings.ReplaceAll(cmd, placeholder, shellQuote(value))
+		cmd = strings.ReplaceAll(cmd, placeholder, Quote(value))
 	}
 
 	sh := userShell()
