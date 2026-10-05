@@ -90,6 +90,10 @@ func (l *RealLister) resolve(sessions model.SeshSessions) model.SeshSessions {
 
 	directory := make(model.SeshSessionMap, len(sessions.Directory))
 	for key, session := range sessions.Directory {
+		if session.Src == "ssh" {
+			directory[key] = session
+			continue
+		}
 		if resolveIcon != nil {
 			session.Icon = resolveIcon(session)
 		}

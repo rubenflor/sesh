@@ -214,3 +214,30 @@ func TestFormatJsonResolvesSessions(t *testing.T) {
 	assert.Empty(t, sessions.Directory["zoxide:app"].StartupCommand, "the input list is left untouched")
 	mockTmux.AssertExpectations(t)
 }
+
+func TestFormatJsonSSHDoesNotResolveLocalMetadata(t *testing.T) {
+	identity := "ssh/server/nutiliti%2F2345"
+	config := model.Config{
+		SessionConfigs: []model.SessionConfig{{Name: identity, Path: "/local", Icon: "local-icon", Alias: "local-alias"}},
+		WildcardConfigs: []model.WildcardConfig{{
+			Pattern: "*", Icon: "wildcard-icon", StartupCommand: "local-start", PreviewCommand: "local-preview",
+		}},
+		WorktreeConfigs: []model.WorktreeConfig{{Repo: "owner/repo", Path: "/local", WorktreeDir: "w"}},
+	}
+	mockHome := home.NewMockHome(t)
+	mockHome.On("ExpandPath", "/local").Return("/local", nil)
+	mockHome.On("ExpandPath", "*").Return("*", nil).Maybe()
+	mockHome.On("ExpandPath", "").Return("", nil).Maybe()
+	l := NewLister(config, mockHome, nil, nil, nil, nil, nil, nil)
+	remote := model.SeshSession{Src: "ssh", Name: identity, Group: 4}
+	sessions := model.SeshSessions{
+		OrderedIndex: []string{"ssh:" + identity},
+		Directory:    model.SeshSessionMap{"ssh:" + identity: remote},
+	}
+
+	got, err := l.Format(sessions, ListOptions{Json: true})
+	require.NoError(t, err)
+	assert.Equal(t, remote, got.Directory["ssh:"+identity])
+	mockHome.AssertNotCalled(t, "ExpandPath", "")
+	assert.Equal(t, remote, sessions.Directory["ssh:"+identity], "formatting leaves the raw row untouched")
+}

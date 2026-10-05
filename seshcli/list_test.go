@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/joshmedeski/sesh/v2/execwrap"
+	seshjson "github.com/joshmedeski/sesh/v2/json"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/tmux"
@@ -13,6 +14,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const legacyLocalListJSON = `[{"Src":"tmux","Name":"local","Path":"/local","StartupCommand":"","PreviewCommand":"","DisableStartupCommand":false,"Tmuxinator":"","Attached":0,"Windows":0,"WindowConfigs":null,"WindowNames":null,"Score":0,"Icon":"","Alias":"","AliasAutoConnect":false,"Tmuxp":"","Wildcard":"","TmuxWindows":null,"Worktree":null,"Created":null,"LastAttached":null,"Activity":null,"Alerts":null}]` + "\n"
+
+func TestListJSONOutputCompatibility(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	mockLister := lister.NewMockLister(t)
+	mockLister.On("List", lister.ListOptions{Context: ctx, Json: true, IconExcludes: []string{}}).Return(model.SeshSessions{
+		OrderedIndex: []string{"tmux:local"},
+		Directory:    model.SeshSessionMap{"tmux:local": {Src: "tmux", Name: "local", Path: "/local"}},
+	}, nil).Once()
+	base := &BaseDeps{Json: seshjson.NewJson()}
+	cmd := newListCommand(base, func(*cobra.Command, *BaseDeps) (*Deps, error) { return &Deps{Lister: mockLister}, nil })
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--json"})
+
+	require.NoError(t, cmd.ExecuteContext(ctx))
+	assert.Equal(t, legacyLocalListJSON, stdout.String())
+	assert.Empty(t, stderr.String())
+}
 
 func TestListSSHOnly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

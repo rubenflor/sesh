@@ -79,7 +79,7 @@ func newListCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*Deps
 				for _, i := range sessions.OrderedIndex {
 					sessionsArray = append(sessionsArray, sessions.Directory[i])
 				}
-				fmt.Println(base.Json.EncodeSessions(sessionsArray))
+				fmt.Fprintln(cmd.OutOrStdout(), base.Json.EncodeSessions(sessionsArray))
 				return nil
 			}
 

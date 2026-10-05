@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/joshmedeski/sesh/v2/connector"
 	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
@@ -13,6 +14,34 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	deps := sshJSONTestDeps(t, []string{"first"}, map[string]execwrap.CommandResult{
+		"first": {Stdout: []byte("nutiliti/2345% café\n")},
+	})
+	const identity = "ssh/first/nutiliti%2F2345%25%20caf%C3%A9"
+	mockPicker := picker.NewMockPicker(t)
+	mockPicker.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, _ picker.PickerOptions) (string, error) {
+		sessions, err := fetch()
+		require.NoError(t, err)
+		require.Len(t, sessions.OrderedIndex, 1)
+		selected := sessions.Directory[sessions.OrderedIndex[0]]
+		assert.Equal(t, "ssh", selected.Src)
+		assert.Equal(t, identity, selected.Name)
+		assert.Empty(t, selected.Path)
+		return selected.Name, nil
+	}).Once()
+	mockConnector := connector.NewMockConnector(t)
+	mockConnector.On("Connect", identity, model.ConnectOpts{}).Return("", nil).Once()
+	deps.Picker = mockPicker
+	deps.Connector = mockConnector
+	cmd := newPickerCommand(&deps.BaseDeps, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
+	cmd.SetArgs([]string{"--ssh"})
+
+	require.NoError(t, cmd.ExecuteContext(ctx))
+}
 
 func TestPickerSSHOnly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

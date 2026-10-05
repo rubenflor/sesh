@@ -11,6 +11,10 @@ import (
 )
 
 func NewConnectCommand(base *BaseDeps) *cobra.Command {
+	return newConnectCommand(base, buildDeps)
+}
+
+func newConnectCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*Deps, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "connect",
 		Aliases: []string{"cn"},
@@ -25,7 +29,7 @@ func NewConnectCommand(base *BaseDeps) *cobra.Command {
 				return nil
 			}
 
-			deps, err := buildDeps(cmd, base)
+			deps, err := build(cmd, base)
 			if err != nil {
 				return err
 			}
