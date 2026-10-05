@@ -15,24 +15,29 @@ const softTTL = 5 * time.Second
 // CachingLister wraps a Lister with stale-while-revalidate caching for List().
 // All other Lister methods delegate directly to the inner lister.
 type CachingLister struct {
-	inner Lister
-	cache cache.Cache
-	wg    sync.WaitGroup
+	inner         Lister
+	cache         cache.Cache
+	sshConfigured bool
+	wg            sync.WaitGroup
 }
 
 // NewCachingLister creates a CachingLister that decorates inner with file-based caching.
-func NewCachingLister(inner Lister, c cache.Cache) *CachingLister {
-	return &CachingLister{inner: inner, cache: c}
+// sshConfigured reports whether inner includes SSH in its default sources.
+func NewCachingLister(inner Lister, c cache.Cache, sshConfigured bool) *CachingLister {
+	return &CachingLister{inner: inner, cache: c, sshConfigured: sshConfigured}
 }
 
 // List implements Lister. It returns cached data when available, triggering a
 // background refresh when the cache is older than the soft TTL.
-// The cache always stores the full unfiltered list; source filters,
-// HideDuplicates, and HideAttached are applied after reading from cache.
+// SSH-inclusive requests bypass caching. The cache stores local sources only;
+// source filters, HideDuplicates, and HideAttached are applied after cache reads.
 func (cl *CachingLister) List(opts ListOptions) (model.SeshSessions, error) {
-	// Always fetch/store the full list (all sources, no dedup, no hide);
+	if slices.Contains(srcs(opts, cl.sshConfigured), "ssh") {
+		return cl.inner.List(opts)
+	}
+	// Fetch/store the full local list (no dedup, no hide);
 	// we apply all view-level filters ourselves after cache read.
-	innerOpts := ListOptions{Context: opts.Context}
+	innerOpts := cl.localOptions(ListOptions{Context: opts.Context})
 
 	cached, err := cl.cache.Read()
 	if err == nil {
@@ -151,8 +156,17 @@ func sourceSet(opts ListOptions) map[string]bool {
 	return m
 }
 
+// localOptions prevents configured defaults from selecting SSH during cache fills.
+func (cl *CachingLister) localOptions(opts ListOptions) ListOptions {
+	opts.SSH = false
+	if cl.sshConfigured && sourceSet(opts) == nil {
+		opts.Tmux, opts.Config, opts.Tmuxinator, opts.Zoxide = true, true, true, true
+	}
+	return opts
+}
+
 func (cl *CachingLister) revalidate(opts ListOptions) {
-	sessions, err := cl.inner.List(opts)
+	sessions, err := cl.inner.List(cl.localOptions(opts))
 	if err != nil {
 		slog.Warn("cache: background revalidation fetch failed", "error", err)
 		return
@@ -162,7 +176,7 @@ func (cl *CachingLister) revalidate(opts ListOptions) {
 	}
 }
 
-// RefreshCache fetches live data from the inner lister and writes it to the cache.
+// RefreshCache fetches live local data from the inner lister and writes it to the cache.
 // This bypasses the cache read entirely, intended for use after sesh connect.
 func (cl *CachingLister) RefreshCache(opts ListOptions) {
 	cl.wg.Add(1)

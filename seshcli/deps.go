@@ -144,7 +144,7 @@ func (b *BaseDeps) BuildAll(configPath string) (*Deps, error) {
 	var cachedLi *lister.CachingLister
 	if config.Cache {
 		fc := cache.NewFileCache()
-		cachedLi = lister.NewCachingLister(li, fc)
+		cachedLi = lister.NewCachingLister(li, fc, len(config.SSH.Hosts) > 0)
 		usedLister = cachedLi
 	}
 

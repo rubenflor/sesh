@@ -13,11 +13,11 @@ func NewCacheCommand(base *BaseDeps) *cobra.Command {
 		Use:   "cache",
 		Short: "Manage the session list cache",
 	}
-	cmd.AddCommand(newCacheRefreshCommand(base))
+	cmd.AddCommand(newCacheRefreshCommand(base, buildDeps))
 	return cmd
 }
 
-func newCacheRefreshCommand(base *BaseDeps) *cobra.Command {
+func newCacheRefreshCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*Deps, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   "refresh",
 		Short: "Rebuild the session list cache from live data",
@@ -28,7 +28,7 @@ session-created/session-closed hooks and picker kill bindings.
 
 Does nothing when the cache is disabled.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			deps, err := buildDeps(cmd, base)
+			deps, err := build(cmd, base)
 			if err != nil {
 				return err
 			}

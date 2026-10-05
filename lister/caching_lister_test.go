@@ -35,6 +35,128 @@ func updatedSessions() model.SeshSessions {
 	}
 }
 
+func TestCachingLister_SSHBypassesCache(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		sshConfigured bool
+		tmux          bool
+	}{
+		{"SSH only", true, false},
+		{"SSH and tmux", true, true},
+		{"explicit SSH without configured hosts", false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := lister.ListOptions{Context: t.Context(), SSH: true, Tmux: tt.tmux, Json: true, HideDuplicates: true}
+			fresh := model.SeshSessions{
+				OrderedIndex: []string{"ssh:ssh/host/0"},
+				Directory:    model.SeshSessionMap{"ssh:ssh/host/0": {Src: "ssh", Name: "ssh/host/0"}},
+			}
+			inner := lister.NewMockLister(t)
+			inner.EXPECT().List(opts).Return(fresh, nil).Once()
+			// Any cache read or write fails, including background refresh.
+			cl := lister.NewCachingLister(inner, cache.NewMockCache(t), tt.sshConfigured)
+
+			got, err := cl.List(opts)
+			cl.Wait()
+
+			require.NoError(t, err)
+			assert.Equal(t, fresh, got)
+		})
+	}
+}
+
+func TestCachingLister_SSHConfiguredDefaultsBypassCache(t *testing.T) {
+	opts := lister.ListOptions{Context: t.Context(), HideAttached: true, SortOrder: model.SortOrder{"ssh", "tmux"}}
+	fresh := model.SeshSessions{
+		OrderedIndex: []string{"ssh:ssh/host/0", "tmux:dev"},
+		Directory: model.SeshSessionMap{
+			"ssh:ssh/host/0": {Src: "ssh", Name: "ssh/host/0"},
+			"tmux:dev":       {Src: "tmux", Name: "dev", Path: "/fresh/dev"},
+		},
+	}
+	inner := lister.NewMockLister(t)
+	inner.EXPECT().List(opts).Return(fresh, nil).Once()
+	cl := lister.NewCachingLister(inner, cache.NewMockCache(t), true)
+
+	got, err := cl.List(opts)
+	cl.Wait()
+
+	require.NoError(t, err)
+	assert.Equal(t, fresh, got)
+}
+
+func TestCachingLister_LocalFilterWithSSHConfigured(t *testing.T) {
+	for _, state := range []string{"cold", "fresh", "stale"} {
+		t.Run(state, func(t *testing.T) {
+			ctx := t.Context()
+			inner := lister.NewMockLister(t)
+			fc := cache.NewMockCache(t)
+			if state == "cold" {
+				fc.EXPECT().Read().Return(cache.CachedData{}, fmt.Errorf("cache missing")).Once()
+			} else {
+				timestamp := time.Now()
+				if state == "stale" {
+					timestamp = timestamp.Add(-time.Hour)
+				}
+				fc.EXPECT().Read().Return(cache.CachedData{Sessions: fakeSessions(), Timestamp: timestamp}, nil).Once()
+			}
+			if state != "fresh" {
+				fresh := mixedSessions()
+				inner.EXPECT().List(lister.ListOptions{
+					Context: ctx, Tmux: true, Config: true, Tmuxinator: true, Zoxide: true,
+				}).Return(fresh, nil).Once()
+				fc.EXPECT().Write(fresh).Return(nil).Once()
+			}
+			cl := lister.NewCachingLister(inner, fc, true)
+
+			got, err := cl.List(lister.ListOptions{Context: ctx, Tmux: true})
+			cl.Wait()
+
+			require.NoError(t, err)
+			assert.Equal(t, []string{"tmux:main"}, got.OrderedIndex)
+		})
+	}
+}
+
+func TestCachingLister_RefreshCacheExcludesSSH(t *testing.T) {
+	localDefaults := lister.ListOptions{Tmux: true, Config: true, Tmuxinator: true, Zoxide: true}
+	for _, tt := range []struct {
+		name string
+		opts lister.ListOptions
+		want lister.ListOptions
+	}{
+		{"configured defaults", lister.ListOptions{}, localDefaults},
+		{"SSH only", lister.ListOptions{SSH: true}, localDefaults},
+		{"SSH and tmux", lister.ListOptions{SSH: true, Tmux: true}, lister.ListOptions{Tmux: true}},
+		{"local filter", lister.ListOptions{Zoxide: true}, lister.ListOptions{Zoxide: true}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.opts.Context, tt.want.Context = t.Context(), t.Context()
+			inner := lister.NewMockLister(t)
+			inner.EXPECT().List(tt.want).Return(fakeSessions(), nil).Once()
+			fc := cache.NewMockCache(t)
+			fc.EXPECT().Write(fakeSessions()).Return(nil).Once()
+			cl := lister.NewCachingLister(inner, fc, true)
+
+			cl.RefreshCache(tt.opts)
+			cl.Wait()
+		})
+	}
+}
+
+func TestCachingLister_SSHFailureDoesNotUseCache(t *testing.T) {
+	opts := lister.ListOptions{Context: t.Context(), SSH: true}
+	wantErr := fmt.Errorf("all configured SSH hosts failed")
+	inner := lister.NewMockLister(t)
+	inner.EXPECT().List(opts).Return(model.SeshSessions{}, wantErr).Once()
+	cl := lister.NewCachingLister(inner, cache.NewMockCache(t), true)
+
+	_, err := cl.List(opts)
+	cl.Wait()
+
+	require.ErrorIs(t, err, wantErr)
+}
+
 func TestCachingLister_ColdStart(t *testing.T) {
 	dir := t.TempDir()
 	fc := cache.NewFileCacheWithPath(filepath.Join(dir, "sessions.gob"))
@@ -44,7 +166,7 @@ func TestCachingLister_ColdStart(t *testing.T) {
 	// Inner is always called with empty opts (full list)
 	inner.On("List", lister.ListOptions{}).Return(sessions, nil).Once()
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	got, err := cl.List(lister.ListOptions{Tmux: true})
 	require.NoError(t, err)
 	assert.Equal(t, sessions.OrderedIndex, got.OrderedIndex)
@@ -62,7 +184,7 @@ func TestCachingLister_ColdStartPreservesContext(t *testing.T) {
 	fc := cache.NewFileCacheWithPath(filepath.Join(t.TempDir(), "sessions.gob"))
 	inner := lister.NewMockLister(t)
 	inner.On("List", lister.ListOptions{Context: ctx}).Return(fakeSessions(), nil).Once()
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 
 	got, err := cl.List(lister.ListOptions{Context: ctx, Tmux: true})
 	require.NoError(t, err)
@@ -79,7 +201,7 @@ func TestCachingLister_WarmHit(t *testing.T) {
 	sessions := fakeSessions()
 	require.NoError(t, fc.Write(sessions))
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	got, err := cl.List(opts)
 	require.NoError(t, err)
 	assert.Equal(t, sessions.OrderedIndex, got.OrderedIndex)
@@ -97,7 +219,7 @@ func TestCachingLister_RefreshThenWarmRead(t *testing.T) {
 	fresh := updatedSessions()
 	inner.On("List", opts).Return(fresh, nil).Once()
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	cl.RefreshCache(opts)
 	cl.Wait()
 
@@ -115,7 +237,7 @@ func TestCachingLister_ColdStartError(t *testing.T) {
 	// Inner is always called with empty opts
 	inner.On("List", lister.ListOptions{}).Return(model.SeshSessions{}, fmt.Errorf("tmux not running")).Once()
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	_, err := cl.List(lister.ListOptions{Tmux: true})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "tmux not running")
@@ -132,7 +254,7 @@ func TestCachingLister_RefreshCache(t *testing.T) {
 	freshSessions := updatedSessions()
 	inner.On("List", opts).Return(freshSessions, nil).Once()
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	cl.RefreshCache(opts)
 	cl.Wait()
 
@@ -156,7 +278,7 @@ func TestCachingLister_DelegatesMethods(t *testing.T) {
 	inner.On("FindTmuxinatorConfig", "test").Return(session, true)
 	inner.On("ListTmuxPanes").Return(model.SeshSessions{}, nil)
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 
 	s, ok := cl.FindTmuxSession("test")
 	assert.True(t, ok)
@@ -206,7 +328,7 @@ func TestCachingLister_HideAttached_ColdStart(t *testing.T) {
 	inner.On("List", lister.ListOptions{}).Return(sessions, nil).Once()
 	inner.On("GetAttachedTmuxSession").Return(sessions.Directory["tmux:main"], true)
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	got, err := cl.List(lister.ListOptions{Tmux: true, HideAttached: true})
 	require.NoError(t, err)
 	// "main" should be filtered out
@@ -230,7 +352,7 @@ func TestCachingLister_HideAttached_WarmHit(t *testing.T) {
 
 	inner.On("GetAttachedTmuxSession").Return(sessions.Directory["tmux:main"], true)
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	got, err := cl.List(lister.ListOptions{Tmux: true, HideAttached: true})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"tmux:dev", "tmux:work"}, got.OrderedIndex)
@@ -249,7 +371,7 @@ func TestCachingLister_HideAttached_NoAttachedSession(t *testing.T) {
 
 	inner.On("GetAttachedTmuxSession").Return(model.SeshSession{}, false)
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	got, err := cl.List(lister.ListOptions{Tmux: true, HideAttached: true})
 	require.NoError(t, err)
 	// Nothing filtered since no session is attached
@@ -269,7 +391,7 @@ func TestCachingLister_WaitBlocksUntilDone(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	})
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	cl.RefreshCache(opts)
 
 	cl.Wait()
@@ -301,7 +423,7 @@ func TestCachingLister_SourceFilter_FromCache(t *testing.T) {
 	sessions := mixedSessions()
 	require.NoError(t, fc.Write(sessions))
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 
 	// Request only tmux — should filter from full cache
 	got, err := cl.List(lister.ListOptions{Tmux: true})
@@ -321,7 +443,7 @@ func TestCachingLister_SourceFilter_DifferentFilters(t *testing.T) {
 	sessions := mixedSessions()
 	require.NoError(t, fc.Write(sessions))
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 
 	// First call: tmux only
 	got, err := cl.List(lister.ListOptions{Tmux: true})
@@ -351,7 +473,7 @@ func TestCachingLister_SourceFilter_ColdStart(t *testing.T) {
 	// Inner is called with empty opts (fetches all sources)
 	inner.On("List", lister.ListOptions{}).Return(sessions, nil).Once()
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 
 	// Request only zoxide — inner fetches all, cache stores all, filter returns zoxide
 	got, err := cl.List(lister.ListOptions{Zoxide: true})
@@ -383,7 +505,7 @@ func TestCachingLister_HideAttached_BeforeHideDuplicates(t *testing.T) {
 
 	inner.On("GetAttachedTmuxSession").Return(sessions.Directory["tmux:project"], true)
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	got, err := cl.List(lister.ListOptions{HideAttached: true, HideDuplicates: true})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"config:project", "tmux:other"}, got.OrderedIndex)
@@ -408,7 +530,7 @@ func TestCachingLister_HideDuplicates_PostCache(t *testing.T) {
 	}
 	require.NoError(t, fc.Write(sessions))
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 
 	// With HideDuplicates, "config:project" is a duplicate of "tmux:project" (same name + path)
 	got, err := cl.List(lister.ListOptions{HideDuplicates: true})
@@ -439,7 +561,7 @@ func TestCachingLister_FormatsAfterCacheRead(t *testing.T) {
 	formatted.Directory["tmux:main"] = formattedSession
 	inner.On("Format", sessions, opts).Return(formatted, nil).Once()
 
-	cl := lister.NewCachingLister(inner, fc)
+	cl := lister.NewCachingLister(inner, fc, false)
 	got, err := cl.List(opts)
 	require.NoError(t, err)
 	assert.Equal(t, "formatted-main", got.Directory["tmux:main"].Name)

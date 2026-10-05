@@ -308,7 +308,7 @@ func BenchmarkCachingListerApplyFilters(b *testing.B) {
 			b.Run(fmt.Sprintf("n=%d/%s", n, tc.name), func(b *testing.B) {
 				sessions := benchSessions(n)
 				attached := sessions.Directory[sessions.OrderedIndex[0]]
-				cl := NewCachingLister(&benchInnerLister{attached: attached, ok: true}, nil)
+				cl := NewCachingLister(&benchInnerLister{attached: attached, ok: true}, nil, false)
 				b.ReportAllocs()
 				for b.Loop() {
 					cl.applyFilters(sessions, tc.opts)
