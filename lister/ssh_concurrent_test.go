@@ -16,6 +16,7 @@ import (
 type controlledSSHExec struct {
 	started        chan string
 	completed      chan string
+	stopped        chan probeStop
 	deadlines      chan time.Duration
 	release        map[string]chan struct{}
 	responses      map[string]execResponse
@@ -31,10 +32,16 @@ type execResponse struct {
 	err    error
 }
 
+type probeStop struct {
+	host string
+	err  error
+}
+
 func newControlledSSHExec(hosts []string) *controlledSSHExec {
 	return &controlledSSHExec{
 		started:   make(chan string, len(hosts)),
 		completed: make(chan string, len(hosts)),
+		stopped:   make(chan probeStop, len(hosts)),
 		deadlines: make(chan time.Duration, len(hosts)),
 		release:   make(map[string]chan struct{}, len(hosts)),
 		responses: make(map[string]execResponse, len(hosts)),
@@ -68,15 +75,19 @@ func (e *controlledSSHExec) RunContext(ctx context.Context, _ string, args ...st
 
 	if e.blockOnContext {
 		<-ctx.Done()
+		stopErr := ctx.Err()
+		e.stopped <- probeStop{host: host, err: stopErr}
 		e.completed <- host
-		return execwrap.CommandResult{ExitCode: -1}, ctx.Err()
+		return execwrap.CommandResult{ExitCode: -1}, stopErr
 	}
 	if gate := e.release[host]; gate != nil {
 		select {
 		case <-gate:
 		case <-ctx.Done():
+			stopErr := ctx.Err()
+			e.stopped <- probeStop{host: host, err: stopErr}
 			e.completed <- host
-			return execwrap.CommandResult{ExitCode: -1}, ctx.Err()
+			return execwrap.CommandResult{ExitCode: -1}, stopErr
 		}
 	}
 	response := e.responses[host]
@@ -198,8 +209,27 @@ func TestDiscoverSSHHostsParentCancellationStopsActiveProbes(t *testing.T) {
 	for range hosts {
 		waitSSHEvent(t, runner.started)
 	}
+	runner.mu.Lock()
+	active := runner.active
+	runner.mu.Unlock()
+	if active != len(hosts) {
+		t.Fatalf("active probes before cancellation = %d, want %d", active, len(hosts))
+	}
 	cancel()
-	result := <-done
+	stoppedHosts := make(map[string]bool, len(hosts))
+	for range hosts {
+		stopped := waitSSHEvent(t, runner.stopped)
+		if !errors.Is(stopped.err, context.Canceled) {
+			t.Errorf("probe %q stopped with %v, want context.Canceled (not its deadline)", stopped.host, stopped.err)
+		}
+		stoppedHosts[stopped.host] = true
+	}
+	for _, host := range hosts {
+		if !stoppedHosts[host] {
+			t.Errorf("probe %q did not report stopping", host)
+		}
+	}
+	result := waitSSHEvent(t, done)
 	if !errors.Is(result.err, context.Canceled) {
 		t.Fatalf("discoverSSHHosts() error = %v, want context.Canceled", result.err)
 	}
