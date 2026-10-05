@@ -175,9 +175,19 @@ func GetAttachedTmuxSession(l *RealLister) (model.SeshSession, bool) {
 	if err != nil {
 		return model.SeshSession{}, false
 	}
+	current := ""
+	if l.tmux.IsAttached() {
+		current, err = l.tmux.GetCurrentSession()
+		if err != nil || current == "" {
+			return model.SeshSession{}, false
+		}
+	}
 	aliases := aliasesByName(l.config)
 	for _, session := range tmuxSessions {
-		if session.Attached != 0 {
+		if session.Attached != 0 && (current == "" || session.Name == current) {
+			if session.SSHBridgeIdentity != "" {
+				return model.SeshSession{}, false
+			}
 			return tmuxToSesh(session, aliases), true
 		}
 	}

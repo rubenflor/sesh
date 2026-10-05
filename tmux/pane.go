@@ -84,5 +84,5 @@ func (t *RealTmux) SelectPane(windowIndex int, paneIndex int) (string, error) {
 }
 
 func (t *RealTmux) GetCurrentSession() (string, error) {
-	return t.shell.Cmd("tmux", "display-message", "-p", "#{session_name}")
+	return t.shell.Cmd(t.bin, "display-message", "-p", "#{session_name}")
 }

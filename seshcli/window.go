@@ -166,6 +166,9 @@ func requireSession(deps *Deps, targetSession string) error {
 		if !deps.Tmux.IsAttached() {
 			return errors.New("not inside a tmux session, use --target to specify one")
 		}
+		if _, found := deps.Lister.GetAttachedTmuxSession(); !found {
+			return errors.New("no local attached session found, use --target to specify one")
+		}
 		return nil
 	}
 	sessions, err := deps.Tmux.ListSessions()
@@ -173,7 +176,7 @@ func requireSession(deps *Deps, targetSession string) error {
 		return err
 	}
 	for _, s := range sessions {
-		if s.Name == targetSession {
+		if s.Name == targetSession && s.SSHBridgeIdentity == "" {
 			return nil
 		}
 	}

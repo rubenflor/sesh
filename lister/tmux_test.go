@@ -41,6 +41,58 @@ func TestTmuxDiscoveryFiltersBridgeMarkersBeforeConversion(t *testing.T) {
 	assert.Equal(t, "sesh-ssh-user", last.Name)
 }
 
+func TestGetAttachedTmuxSessionBridgeUnavailable(t *testing.T) {
+	for _, marker := range []string{"ssh/host/work", ""} {
+		t.Run("marker="+marker, func(t *testing.T) {
+			m := tmux.NewMockTmux(t)
+			m.EXPECT().IsAttached().Return(true)
+			m.EXPECT().GetCurrentSession().Return("sesh-ssh-user", nil)
+			m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+				{Name: "detached", Path: "/detached"},
+				{Name: "sesh-ssh-user", Path: "/user", Attached: 1, SSHBridgeIdentity: marker},
+				{Name: "other-client", Path: "/other", Attached: 1},
+			}, nil)
+			l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
+
+			session, found := l.GetAttachedTmuxSession()
+
+			if marker != "" {
+				assert.False(t, found)
+				assert.Equal(t, model.SeshSession{}, session)
+			} else {
+				require.True(t, found)
+				assert.Equal(t, "sesh-ssh-user", session.Name)
+				assert.Equal(t, "/user", session.Path)
+			}
+		})
+	}
+}
+
+func TestAttachedSessionUsesCallingClientWithMultipleClients(t *testing.T) {
+	for _, current := range []string{"local", "bridge"} {
+		t.Run(current, func(t *testing.T) {
+			m := tmux.NewMockTmux(t)
+			m.EXPECT().IsAttached().Return(true)
+			m.EXPECT().GetCurrentSession().Return(current, nil)
+			m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+				{Name: "local", Path: "/local", Attached: 1},
+				{Name: "bridge", Path: "/bridge", Attached: 1, SSHBridgeIdentity: "ssh/host/work"},
+			}, nil)
+			l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
+
+			session, found := l.GetAttachedTmuxSession()
+
+			if current == "bridge" {
+				assert.False(t, found)
+				assert.Equal(t, model.SeshSession{}, session)
+			} else {
+				require.True(t, found)
+				assert.Equal(t, "local", session.Name)
+			}
+		})
+	}
+}
+
 func TestListTmuxSessions(t *testing.T) {
 	mockTmux := new(tmux.MockTmux)
 	t.Run("should list tmux sessions", func(t *testing.T) {

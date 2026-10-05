@@ -39,6 +39,19 @@ func (c *RealConnector) ensureSession(name string) (model.SeshSession, error) {
 	if connection.Session.Src == "ssh" {
 		return model.SeshSession{}, fmt.Errorf("%q is an SSH session, not a local tmux session", name)
 	}
+	if connection.New {
+		// A hidden bridge may share a name with a config or directory result.
+		// Do not let the create path reuse it as an ordinary local session.
+		sessions, err := c.tmux.ListSessions()
+		if err != nil {
+			return model.SeshSession{}, err
+		}
+		for _, session := range sessions {
+			if session.Name == connection.Session.Name && session.SSHBridgeIdentity != "" {
+				return model.SeshSession{}, fmt.Errorf("%q is an internal SSH bridge, not a local session", session.Name)
+			}
+		}
+	}
 	if connection.AddToZoxide {
 		c.zoxide.Add(connection.Session.Path)
 	}

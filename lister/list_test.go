@@ -382,6 +382,8 @@ func TestHideDuplicates(t *testing.T) {
 
 func TestHideAttachedBeforeHideDuplicates(t *testing.T) {
 	mockTmux := new(tmux.MockTmux)
+	mockTmux.On("IsAttached").Return(true)
+	mockTmux.On("GetCurrentSession").Return("project", nil)
 	mockZoxide := new(zoxide.MockZoxide)
 	mockHome := new(home.MockHome)
 	mockTmuxinator := new(tmuxinator.MockTmuxinator)
