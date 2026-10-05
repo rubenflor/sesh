@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"slices"
 	"strings"
@@ -39,4 +40,42 @@ func sshAttachCommand(identity string) (string, error) {
 	}
 	remote := "tmux attach-session -t " + shell.Quote(target)
 	return "exec ssh -tt -- " + shell.Quote(host) + " " + shell.Quote(remote), nil
+}
+
+func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {
+	command, err := sshAttachCommand(identity)
+	if err != nil {
+		return "", err
+	}
+	sessions, err := c.tmux.ListSessions()
+	if err != nil {
+		return "", fmt.Errorf("failed to list SSH bridges: %w", err)
+	}
+	occupied := make(map[string]bool, len(sessions))
+	for _, session := range sessions {
+		occupied[session.Name] = true
+		// Server-assigned IDs prevent name-shaped targets from redirecting lookup.
+		marker, err := c.tmux.GetSessionEnvironment(session.ID, model.SSHBridgeIdentityEnv)
+		if err != nil {
+			return "", fmt.Errorf("failed to read SSH bridge marker for %q: %w", session.Name, err)
+		}
+		if marker == identity {
+			return session.Name, nil
+		}
+	}
+	digest := sha256.Sum256([]byte(identity))
+	for slot := 0; slot < 8; slot++ {
+		name := fmt.Sprintf("sesh-ssh-%x-%d", digest[:12], slot)
+		if occupied[name] {
+			continue
+		}
+		if _, err := c.tmux.NewSessionWithCommand(model.TmuxSessionOpts{
+			Name: name, Command: command,
+			Environment: []string{model.SSHBridgeIdentityEnv + "=" + identity},
+		}); err != nil {
+			return "", fmt.Errorf("failed to create SSH bridge %q: %w", name, err)
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("SSH bridge name collision for %q: all 8 slots are occupied", identity)
 }

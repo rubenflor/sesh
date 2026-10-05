@@ -2,6 +2,9 @@ package model
 
 import "time"
 
+// SSHBridgeIdentityEnv holds the canonical SSH identity in a bridge's session environment.
+const SSHBridgeIdentityEnv = "SESH_SSH_IDENTITY"
+
 type TmuxSession struct {
 	Created           *time.Time
 	LastAttached      *time.Time

@@ -1,6 +1,11 @@
 package tmux
 
 import (
+	"errors"
+	"fmt"
+	"os/exec"
+	"strings"
+
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/oswrap"
 	"github.com/joshmedeski/sesh/v2/shell"
@@ -13,6 +18,7 @@ type Tmux interface {
 	ListAllWindows() (map[string][]model.TmuxWindow, error)
 	NewSession(sessionName string, startDir string) (string, error)
 	NewSessionWithCommand(opts model.TmuxSessionOpts) (string, error)
+	GetSessionEnvironment(targetSession string, name string) (string, error)
 	NewWindowInSession(opts model.TmuxWindowOpts) (string, error)
 	IsAttached() bool
 	AttachSession(targetSession string) (string, error)
@@ -75,6 +81,32 @@ func (t *RealTmux) NewSessionWithCommand(opts model.TmuxSessionOpts) (string, er
 		args = append(args, "--", opts.Command)
 	}
 	return t.shell.Cmd(t.bin, args...)
+}
+
+// GetSessionEnvironment reads only the session environment, without falling
+// back to global values. An unset or removed variable returns an empty string.
+func (t *RealTmux) GetSessionEnvironment(targetSession string, name string) (string, error) {
+	output, err := t.shell.CmdCapture(t.bin, "show-environment", "-t", targetSession, "--", name)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if output != "" || !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return "", err
+		}
+		// A missing variable exits 1. Confirm that the same session environment
+		// is readable before treating this as absence; never parse other values.
+		if _, probeErr := t.shell.CmdCapture(t.bin, "show-environment", "-t", targetSession); probeErr == nil {
+			return "", nil
+		}
+		return "", err
+	}
+	if output == "" || output == "-"+name {
+		return "", nil
+	}
+	value, found := strings.CutPrefix(output, name+"=")
+	if !found {
+		return "", fmt.Errorf("unreadable session environment variable %q", name)
+	}
+	return value, nil
 }
 
 func (t *RealTmux) CapturePane(targetSession string) (string, error) {
