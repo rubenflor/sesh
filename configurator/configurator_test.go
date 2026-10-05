@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/joshmedeski/sesh/v2/model"
@@ -285,6 +286,22 @@ hosts = ["myinventa", "bookstack"]
 `)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"myinventa", "bookstack"}, config.SSH.Hosts)
+}
+
+func TestGetConfig_ReadmeSSHExample(t *testing.T) {
+	readme, err := os.ReadFile("../README.md")
+	require.NoError(t, err)
+	_, section, found := strings.Cut(string(readme), "### Remote tmux over SSH\n")
+	require.True(t, found, "README must document the SSH source")
+	_, example, found := strings.Cut(section, "```toml\n")
+	require.True(t, found, "SSH section must include a TOML example")
+	example, _, found = strings.Cut(example, "```")
+	require.True(t, found, "TOML fence must close")
+
+	config, err := configFromTOML(t, "strict_mode = true\n"+example)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"dev", "staging"}, config.SSH.Hosts)
 }
 
 func TestGetConfig_SSHHostsStrictMode(t *testing.T) {

@@ -661,6 +661,67 @@ sesh --config /path/to/custom/sesh.toml connect my-session
 
 The flag works with any subcommand. When specified, the file must exist or sesh will return an error. Without the flag, sesh uses the default config path.
 
+### Remote tmux over SSH
+
+Enable remote session discovery in your main `sesh.toml` with explicit OpenSSH
+aliases:
+
+```toml
+[ssh]
+hosts = ["dev", "staging"]
+```
+
+Use the aliases you would pass to `ssh dev` or `ssh staging`. OpenSSH remains
+responsible for host resolution, authentication, ports, keys, ProxyJump,
+ControlMaster, and host-key policy, including settings in `~/.ssh/config`.
+Sesh does not enumerate that file. Discovery is non-interactive, so configure
+authentication and host trust before listing sessions.
+
+`[ssh]` is a root-level table supported by the [configuration schema](sesh.schema.json).
+Put it in the main config file: SSH hosts are not merged from imported files.
+Host entries must be non-empty and unique. Without this table, or with
+`hosts = []`, default listing keeps its existing local sources. A non-empty
+host list adds SSH sessions to both `sesh list` and `sesh picker` by default.
+
+```sh
+sesh list --ssh              # remote sessions only
+sesh picker --ssh            # picker restricted to remote sessions
+sesh list --tmux --ssh       # combine local tmux and remote sessions
+sesh list --ssh --json       # remote sessions using the existing JSON shape
+sesh connect ssh/dev/work    # attach to the existing remote session "work"
+```
+
+Remote JSON rows have `Src = "ssh"`, an empty `Path`, and a canonical `Name`
+of `ssh/<encoded-host>/<encoded-session>`. Components use UTF-8 percent encoding
+with uppercase hex; for example, session `team/work` on `dev` becomes
+`ssh/dev/team%2Fwork`. Pass the returned `Name` unchanged to `sesh connect`,
+including from external pickers or Raycast. SSH v1 attaches only to existing
+remote tmux sessions; it does not create them or run remote startup commands.
+`connect --command` and `connect --root` are unsupported for SSH targets.
+
+Connecting creates or reuses an internal local tmux bridge whose pane runs
+OpenSSH and attaches to remote tmux. A local tmux-compatible executable is
+required. If `tmux_command` is configured, that executable must support the
+session environment and lifecycle options used by SSH bridges.
+
+Outside tmux, plain `connect` attaches your terminal to the bridge;
+inside tmux, it switches your client. `connect --switch` requires an already
+attached local tmux client, including when called from a GUI. If none exists,
+attach a local client or use plain `connect` from a terminal.
+
+This produces nested tmux: local tmux → SSH → remote tmux. Neither prefix is
+changed. With the default `Ctrl-b` prefix on both sides, press `Ctrl-b Ctrl-b`
+to invoke local tmux's `send-prefix` binding, then the remote tmux key. The
+local bridge status bar is hidden; remote tmux controls its own status bar.
+Bridges and their panes are hidden from Sesh lists and local window operations;
+local root and rename operations treat an attached bridge as unavailable.
+`--hide-attached` may still show its corresponding SSH row.
+
+A live bridge is reused; reconnecting replaces a stale bridge. If SSH or the
+remote attach fails immediately, its pane preserves the error output for
+inspection. Requests that include SSH bypass the session-list cache, while
+local-only source filters keep their existing cache behavior.
+
 ### Custom Multiplexer (psmux)
 
 Sesh uses `tmux` as the default terminal multiplexer, but you can configure it to use any tmux-compatible multiplexer like [psmux](https://github.com/psmux/psmux) by setting `tmux_command` in your `sesh.toml`:
