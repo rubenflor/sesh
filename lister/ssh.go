@@ -2,8 +2,11 @@ package lister
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/model"
@@ -12,6 +15,17 @@ import (
 // tmux returns status 1 when it has no server or sessions. The remote shell
 // turns only that status into success; other tmux failures remain failures.
 const sshDiscoveryCommand = `sh -c 'tmux list-sessions -F "#{session_name}" || test "$?" -eq 1'`
+
+const (
+	maxConcurrentSSHProbes = 8
+	sshProbeTimeout        = 5 * time.Second
+)
+
+type sshHostResult struct {
+	host     string
+	sessions model.SeshSessions
+	err      error
+}
 
 func probeSSHHost(ctx context.Context, runner execwrap.Exec, host string) (model.SeshSessions, error) {
 	result, err := runner.RunContext(
@@ -55,6 +69,79 @@ func probeSSHHost(ctx context.Context, runner execwrap.Exec, host string) (model
 			Src:  "ssh",
 			Name: identity,
 		}
+	}
+	return sessions, nil
+}
+
+func discoverSSHHosts(ctx context.Context, runner execwrap.Exec, hosts []string) ([]sshHostResult, error) {
+	results := make([]sshHostResult, len(hosts))
+	if len(hosts) == 0 {
+		return results, nil
+	}
+
+	workerCount := min(len(hosts), maxConcurrentSSHProbes)
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				host := hosts[index]
+				if err := ctx.Err(); err != nil {
+					results[index] = sshHostResult{host: host, err: err}
+					continue
+				}
+
+				hostCtx, cancel := context.WithTimeout(ctx, sshProbeTimeout)
+				sessions, err := probeSSHHost(hostCtx, runner, host)
+				cancel()
+				results[index] = sshHostResult{host: host, sessions: sessions, err: err}
+			}
+		}()
+	}
+
+dispatch:
+	for index := range hosts {
+		select {
+		case <-ctx.Done():
+			for pending := index; pending < len(hosts); pending++ {
+				results[pending] = sshHostResult{host: hosts[pending], err: ctx.Err()}
+			}
+			break dispatch
+		case jobs <- index:
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if err := ctx.Err(); err != nil {
+		return results, err
+	}
+	return results, nil
+}
+
+func aggregateSSHHostResults(results []sshHostResult, failWhenAllHostsFail bool) (model.SeshSessions, error) {
+	sessions := model.SeshSessions{
+		Directory:    make(model.SeshSessionMap),
+		OrderedIndex: make([]string, 0),
+	}
+	failedHosts := make([]error, 0, len(results))
+	successfulHosts := 0
+
+	for _, result := range results {
+		if result.err != nil {
+			failedHosts = append(failedHosts, result.err)
+			continue
+		}
+		successfulHosts++
+		for _, key := range result.sessions.OrderedIndex {
+			sessions.OrderedIndex = append(sessions.OrderedIndex, key)
+			sessions.Directory[key] = result.sessions.Directory[key]
+		}
+	}
+
+	if failWhenAllHostsFail && len(results) > 0 && successfulHosts == 0 {
+		return model.SeshSessions{}, fmt.Errorf("all configured SSH hosts failed: %w", errors.Join(failedHosts...))
 	}
 	return sessions, nil
 }
