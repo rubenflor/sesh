@@ -11,12 +11,16 @@ import (
 )
 
 func NewListCommand(base *BaseDeps) *cobra.Command {
+	return newListCommand(base, buildDeps)
+}
+
+func newListCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*Deps, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"l"},
 		Short:   "List sessions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			deps, err := buildDeps(cmd, base)
+			deps, err := build(cmd, base)
 			if err != nil {
 				return err
 			}
@@ -32,6 +36,7 @@ func NewListCommand(base *BaseDeps) *cobra.Command {
 			icons, _ := cmd.Flags().GetBool("icons")
 			noColor, _ := cmd.Flags().GetBool("no-color")
 			tmuxinator, _ := cmd.Flags().GetBool("tmuxinator")
+			ssh, _ := cmd.Flags().GetBool("ssh")
 			hideDuplicates, _ := cmd.Flags().GetBool("hide-duplicates")
 			panes, _ := cmd.Flags().GetBool("panes")
 			blacklisted, _ := cmd.Flags().GetBool("blacklisted")
@@ -57,6 +62,7 @@ func NewListCommand(base *BaseDeps) *cobra.Command {
 				Tmux:           tmux,
 				Zoxide:         zoxide,
 				Tmuxinator:     tmuxinator,
+				SSH:            ssh,
 				HideDuplicates: hideDuplicates,
 				Panes:          panes,
 				Blacklisted:    blacklisted,
@@ -78,7 +84,7 @@ func NewListCommand(base *BaseDeps) *cobra.Command {
 			}
 
 			for _, i := range sessions.OrderedIndex {
-				fmt.Println(sessions.Directory[i].Name)
+				fmt.Fprintln(cmd.OutOrStdout(), sessions.Directory[i].Name)
 			}
 
 			return nil
@@ -93,6 +99,7 @@ func NewListCommand(base *BaseDeps) *cobra.Command {
 	cmd.Flags().BoolP("icons", "i", false, "show icons")
 	cmd.Flags().BoolP("no-color", "n", false, "show icons without color (requires --icons)")
 	cmd.Flags().BoolP("tmuxinator", "T", false, "show tmuxinator configs")
+	cmd.Flags().Bool("ssh", false, "show remote tmux sessions over SSH")
 	cmd.Flags().BoolP("hide-duplicates", "d", false, "hide duplicate entries")
 	cmd.Flags().BoolP("panes", "p", false, "show panes in current session")
 	cmd.Flags().BoolP("blacklisted", "b", false, "show blacklisted sessions")

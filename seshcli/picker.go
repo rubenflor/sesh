@@ -9,12 +9,16 @@ import (
 )
 
 func NewPickerCommand(base *BaseDeps) *cobra.Command {
+	return newPickerCommand(base, buildDeps)
+}
+
+func newPickerCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*Deps, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "picker",
 		Aliases: []string{"pick", "pk"},
 		Short:   "Interactive session picker",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			deps, err := buildDeps(cmd, base)
+			deps, err := build(cmd, base)
 			if err != nil {
 				return err
 			}
@@ -27,6 +31,7 @@ func NewPickerCommand(base *BaseDeps) *cobra.Command {
 			zoxide, _ := cmd.Flags().GetBool("zoxide")
 			hideAttached, _ := cmd.Flags().GetBool("hide-attached")
 			tmuxinator, _ := cmd.Flags().GetBool("tmuxinator")
+			ssh, _ := cmd.Flags().GetBool("ssh")
 			hideDuplicates, _ := cmd.Flags().GetBool("hide-duplicates")
 
 			listerOpts := lister.ListOptions{
@@ -36,6 +41,7 @@ func NewPickerCommand(base *BaseDeps) *cobra.Command {
 				Tmux:           tmux,
 				Zoxide:         zoxide,
 				Tmuxinator:     tmuxinator,
+				SSH:            ssh,
 				HideDuplicates: hideDuplicates,
 			}
 			fetchFunc := func() (model.SeshSessions, error) {
@@ -108,6 +114,7 @@ func NewPickerCommand(base *BaseDeps) *cobra.Command {
 	cmd.Flags().BoolP("hide-attached", "H", false, "don't show currently attached sessions")
 	cmd.Flags().BoolP("icons", "i", false, "show icons")
 	cmd.Flags().BoolP("tmuxinator", "T", false, "show tmuxinator configs")
+	cmd.Flags().Bool("ssh", false, "show remote tmux sessions over SSH")
 	cmd.Flags().BoolP("hide-duplicates", "d", false, "hide duplicate entries")
 	cmd.Flags().BoolP("separator-aware", "s", false, "match spaces to separators (-_/\\)")
 	cmd.Flags().StringP("prompt", "p", "", "prompt shown in the picker TUI")
