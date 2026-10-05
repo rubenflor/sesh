@@ -122,7 +122,7 @@ func TestSSHIntegrationListHandoffAndCache(t *testing.T) {
 	s.On("ListCmd", "tmux", "list-clients", "-F", mock.Anything).
 		Return([]string{"client::/dev/ttys001::$1::300"}, nil).Once()
 	s.On("CmdCapture", "tmux", "display-message", "-p", "-t", "$1:", "#{pane_dead}").Return("0", nil).Twice()
-	s.On("Cmd", "tmux", "switch-client", "-t", "renamed-bridge").Return("", nil).Twice()
+	s.On("Cmd", "tmux", "switch-client", "-t", "$1").Return("", nil).Twice()
 	connect := newConnectCommand(&deps.BaseDeps, build)
 	connect.SetArgs([]string{"--switch", selected})
 	require.NoError(t, connect.ExecuteContext(t.Context()))
@@ -216,7 +216,7 @@ func TestSSHIntegrationBridgeMetadataNoLeak(t *testing.T) {
 			assert.Empty(t, out.String())
 		})
 	}
-	s.On("ListCmd", "tmux", "list-windows", "-t", integrationUserCollision, "-F", mock.Anything).
+	s.On("ListCmd", "tmux", "list-windows", "-t", "$2", "-F", mock.Anything).
 		Return([]string{}, nil).Once()
 	root := &cobra.Command{Use: "sesh"}
 	root.PersistentFlags().String("config", configPath, "")

@@ -157,8 +157,8 @@ func TestConnectSSHCreatesBridgeAndAttaches(t *testing.T) {
 		Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
 		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
 		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
-	}).Return("", nil).Once()
-	mTmux.EXPECT().SwitchOrAttach(bridge, model.ConnectOpts{}).
+	}).Return("$8 %9", nil).Once()
+	mTmux.EXPECT().SwitchOrAttach("$8", model.ConnectOpts{}).
 		Return("attaching to tmux session: "+bridge, nil).Once()
 	c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}},
 		dir.NewMockDir(t), home.NewMockHome(t), lister.NewMockLister(t), namer.NewMockNamer(t),
@@ -229,10 +229,10 @@ func TestConnectSSHReusesBridge(t *testing.T) {
 			}
 			if tt.switchTo && !tt.attached {
 				mTmux.EXPECT().ResolveClient().Return("/dev/ttys002").Once()
-				mTmux.EXPECT().SwitchClientTarget("/dev/ttys002", bridge).Return("", nil).Once()
+				mTmux.EXPECT().SwitchClientTarget("/dev/ttys002", "$8").Return("", nil).Once()
 				mFocuser.EXPECT().Activate("wezterm").Return(true, nil).Once()
 			} else {
-				mTmux.EXPECT().SwitchOrAttach(bridge, model.ConnectOpts{Switch: tt.switchTo}).Return("", nil).Once()
+				mTmux.EXPECT().SwitchOrAttach("$8", model.ConnectOpts{Switch: tt.switchTo}).Return("", nil).Once()
 			}
 			c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}, Terminal: "wezterm"},
 				dir.NewMockDir(t), home.NewMockHome(t), lister.NewMockLister(t), namer.NewMockNamer(t),
@@ -254,7 +254,7 @@ func TestConnectSSHReportsAttachFailure(t *testing.T) {
 	mTmux.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return(identity, nil).Once()
 	mTmux.EXPECT().IsPaneDead("$8").Return(false, nil).Once()
 	wantErr := errors.New("terminal unavailable")
-	mTmux.EXPECT().SwitchOrAttach("bridge", model.ConnectOpts{}).Return("", wantErr).Once()
+	mTmux.EXPECT().SwitchOrAttach("$8", model.ConnectOpts{}).Return("", wantErr).Once()
 	c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}},
 		dir.NewMockDir(t), home.NewMockHome(t), lister.NewMockLister(t), namer.NewMockNamer(t),
 		startup.NewMockStartup(t), mTmux, zoxide.NewMockZoxide(t),

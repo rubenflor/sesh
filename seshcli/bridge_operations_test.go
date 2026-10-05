@@ -96,9 +96,9 @@ func TestWindowListAllowsUnmarkedLocalSession(t *testing.T) {
 			base, configPath := bridgeOperationsBase(t, "")
 			s := base.Shell.(*shell.MockShell)
 			if len(args) == 1 {
-				s.On("ListCmd", "tmux", "list-windows", "-F", mock.Anything).Return([]string{}, nil).Once()
+				s.On("ListCmd", "tmux", "list-windows", "-t", "$1", "-F", mock.Anything).Return([]string{}, nil).Once()
 			} else {
-				s.On("ListCmd", "tmux", "list-windows", "-t", "renamed-bridge", "-F", mock.Anything).Return([]string{}, nil).Once()
+				s.On("ListCmd", "tmux", "list-windows", "-t", "$1", "-F", mock.Anything).Return([]string{}, nil).Once()
 			}
 			root := &cobra.Command{Use: "sesh"}
 			root.PersistentFlags().String("config", configPath, "")

@@ -17,6 +17,8 @@ type Tmux interface {
 	ListAllWindowNames(format string) (map[string][]string, error)
 	ListAllWindows() (map[string][]model.TmuxWindow, error)
 	NewSession(sessionName string, startDir string) (string, error)
+	// With creation options, the result is "<session_id> <pane_id>" for safe
+	// handoff to later operations. Without options, it is the command's stdout.
 	NewSessionWithCommand(opts model.TmuxSessionOpts) (string, error)
 	GetSessionEnvironment(targetSession string, name string) (string, error)
 	IsPaneDead(targetSession string) (bool, error)

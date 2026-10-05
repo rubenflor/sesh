@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/joshmedeski/sesh/v2/model"
+	"github.com/joshmedeski/sesh/v2/tmux"
 )
 
 // addTargetFlags wires --target and the deprecated --session alias it replaced.
@@ -106,8 +107,8 @@ func listWindows(cmd *cobra.Command, base *BaseDeps) error {
 		return err
 	}
 
-	targetSession := targetFlag(cmd)
-	if err := requireSession(deps, targetSession); err != nil {
+	targetSession, err := windowSessionID(deps, targetFlag(cmd))
+	if err != nil {
 		return err
 	}
 
@@ -158,27 +159,19 @@ func connectWindow(cmd *cobra.Command, base *BaseDeps, name string) error {
 	return nil
 }
 
-// requireSession keeps the listing command honest about its target: an empty
+// windowSessionID keeps the listing command honest about its target: an empty
 // target only means "the attached session" when there is one, and a named
 // session has to already be running to have anything to list.
-func requireSession(deps *Deps, targetSession string) error {
+func windowSessionID(deps *Deps, targetSession string) (string, error) {
 	if targetSession == "" {
 		if !deps.Tmux.IsAttached() {
-			return errors.New("not inside a tmux session, use --target to specify one")
+			return "", errors.New("not inside a tmux session, use --target to specify one")
 		}
-		if _, found := deps.Lister.GetAttachedTmuxSession(); !found {
-			return errors.New("no local attached session found, use --target to specify one")
+		session, found := deps.Lister.GetAttachedTmuxSession()
+		if !found {
+			return "", errors.New("no local attached session found, use --target to specify one")
 		}
-		return nil
+		targetSession = session.Name
 	}
-	sessions, err := deps.Tmux.ListSessions()
-	if err != nil {
-		return err
-	}
-	for _, s := range sessions {
-		if s.Name == targetSession && s.SSHBridgeIdentity == "" {
-			return nil
-		}
-	}
-	return fmt.Errorf("session '%s' not found", targetSession)
+	return tmux.LocalSessionID(deps.Tmux, targetSession)
 }

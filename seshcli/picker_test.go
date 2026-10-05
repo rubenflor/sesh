@@ -43,8 +43,8 @@ func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
 		Environment:    []string{"SESH_SSH_IDENTITY=ssh/first/nutiliti%2F2345%25%20caf%C3%A9"},
 		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
 		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
-	}).Return("", nil).Once()
-	mTmux.EXPECT().SwitchOrAttach(bridge, model.ConnectOpts{}).Return("", nil).Once()
+	}).Return("$8 %9", nil).Once()
+	mTmux.EXPECT().SwitchOrAttach("$8", model.ConnectOpts{}).Return("", nil).Once()
 	deps.Picker = mockPicker
 	deps.Connector = connector.NewConnector(deps.Config,
 		nil, nil, deps.Lister, nil, nil, mTmux, nil, nil, nil,

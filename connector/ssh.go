@@ -90,7 +90,7 @@ func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {
 				return "", fmt.Errorf("failed to inspect SSH bridge %q: %w", session.Name, err)
 			}
 			if !dead {
-				return session.Name, nil
+				return session.ID, nil
 			}
 			if _, err := c.tmux.KillSession(session.ID); err != nil {
 				return "", fmt.Errorf("failed to remove stale SSH bridge %q: %w", session.Name, err)
@@ -104,7 +104,7 @@ func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {
 		if occupied[name] {
 			continue
 		}
-		if _, err := c.tmux.NewSessionWithCommand(model.TmuxSessionOpts{
+		created, err := c.tmux.NewSessionWithCommand(model.TmuxSessionOpts{
 			Name: name, Command: command,
 			Environment: []string{model.SSHBridgeIdentityEnv + "=" + identity},
 			SessionOptions: []model.TmuxOption{
@@ -115,10 +115,15 @@ func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {
 				{Name: "remain-on-exit", Value: "failed"},
 				{Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."},
 			},
-		}); err != nil {
+		})
+		if err != nil {
 			return "", fmt.Errorf("failed to create SSH bridge %q: %w", name, err)
 		}
-		return name, nil
+		ids := strings.Fields(created)
+		if len(ids) != 2 || !strings.HasPrefix(ids[0], "$") || !strings.HasPrefix(ids[1], "%") {
+			return "", fmt.Errorf("tmux returned unreadable SSH bridge session/pane IDs: %q", created)
+		}
+		return ids[0], nil
 	}
 	return "", fmt.Errorf("SSH bridge name collision for %q: all 8 slots are occupied", identity)
 }

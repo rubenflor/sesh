@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/joshmedeski/sesh/v2/model"
+	"github.com/joshmedeski/sesh/v2/tmux"
 )
 
 // ConnectWindow selects the named window in the target session, creating it
@@ -15,6 +16,10 @@ import (
 // connect to that name reuses the lowest-indexed one.
 func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, error) {
 	session, err := c.targetSession(opts.Session)
+	if err != nil {
+		return "", err
+	}
+	sessionID, err := tmux.LocalSessionID(c.tmux, session.Name)
 	if err != nil {
 		return "", err
 	}
@@ -33,7 +38,7 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 	}
 
 	if name != "" && !opts.New {
-		windows, err := c.tmux.ListWindows(session.Name)
+		windows, err := c.tmux.ListWindows(sessionID)
 		if err != nil {
 			return "", fmt.Errorf("failed to list windows in '%s': %w", session.Name, err)
 		}
@@ -43,15 +48,18 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 			}
 			// Target by index: a name shared with a session resolves
 			// ambiguously (see #280), an index never does.
-			target := fmt.Sprintf("%s:%d", session.Name, window.Index)
-			return c.reuseWindow(session.Name, target, opts)
+			target := fmt.Sprintf("%s:%d", sessionID, window.Index)
+			if _, err := c.reuseWindow(sessionID, target, opts); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("%s:%d", session.Name, window.Index), nil
 		}
 	}
 
 	target, err := c.tmux.NewWindowInSession(model.TmuxWindowOpts{
 		Name:          name,
 		StartDir:      startDir,
-		TargetSession: session.Name,
+		TargetSession: sessionID,
 		Command:       opts.Command,
 		Background:    opts.Background,
 	})
@@ -62,7 +70,7 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 		return target, nil
 	}
 	// new-window already made it the session's active window.
-	if _, err := c.focusSession(session.Name, opts.Switch); err != nil {
+	if _, err := c.focusSession(sessionID, opts.Switch); err != nil {
 		return "", err
 	}
 	return target, nil
