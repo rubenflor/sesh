@@ -39,9 +39,11 @@ func TestJSONNamePassedUnchangedToConnectSwitch(t *testing.T) {
 	mTmux.EXPECT().ListClients().Return([]model.TmuxClient{{Name: "/dev/ttys002"}}, nil).Twice()
 	mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
 	mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
-		Name:        bridge,
-		Command:     `exec ssh -tt -- 'first' 'tmux attach-session -t '\''=nutiliti/2345% café'\'''`,
-		Environment: []string{"SESH_SSH_IDENTITY=ssh/first/nutiliti%2F2345%25%20caf%C3%A9"},
+		Name:           bridge,
+		Command:        `exec ssh -tt -- 'first' 'tmux attach-session -t '\''=nutiliti/2345% café'\'''`,
+		Environment:    []string{"SESH_SSH_IDENTITY=ssh/first/nutiliti%2F2345%25%20caf%C3%A9"},
+		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 	}).Return("", nil).Once()
 	mTmux.EXPECT().IsAttached().Return(false).Once()
 	mTmux.EXPECT().ResolveClient().Return("/dev/ttys002").Once()

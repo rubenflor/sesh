@@ -152,9 +152,11 @@ func TestConnectSSHCreatesBridgeAndAttaches(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
 	mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
 	mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
-		Name:        bridge,
-		Command:     `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
-		Environment: []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		Name:           bridge,
+		Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+		Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 	}).Return("", nil).Once()
 	mTmux.EXPECT().SwitchOrAttach(bridge, model.ConnectOpts{}).
 		Return("attaching to tmux session: "+bridge, nil).Once()
@@ -216,6 +218,7 @@ func TestConnectSSHReusesBridge(t *testing.T) {
 			mFocuser := focuser.NewMockFocuser(t)
 			mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: bridge, ID: "$8"}}, nil).Once()
 			mTmux.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return(identity, nil).Once()
+			mTmux.EXPECT().IsPaneDead("$8").Return(false, nil).Once()
 			if tt.switchTo {
 				clientChecks := 1
 				if !tt.attached {
@@ -249,6 +252,7 @@ func TestConnectSSHReportsAttachFailure(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
 	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "bridge", ID: "$8"}}, nil).Once()
 	mTmux.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return(identity, nil).Once()
+	mTmux.EXPECT().IsPaneDead("$8").Return(false, nil).Once()
 	wantErr := errors.New("terminal unavailable")
 	mTmux.EXPECT().SwitchOrAttach("bridge", model.ConnectOpts{}).Return("", wantErr).Once()
 	c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}},

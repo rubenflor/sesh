@@ -19,6 +19,7 @@ type Tmux interface {
 	NewSession(sessionName string, startDir string) (string, error)
 	NewSessionWithCommand(opts model.TmuxSessionOpts) (string, error)
 	GetSessionEnvironment(targetSession string, name string) (string, error)
+	IsPaneDead(targetSession string) (bool, error)
 	NewWindowInSession(opts model.TmuxWindowOpts) (string, error)
 	IsAttached() bool
 	AttachSession(targetSession string) (string, error)
@@ -76,6 +77,9 @@ func (t *RealTmux) NewSessionWithCommand(opts model.TmuxSessionOpts) (string, er
 	}
 	for _, assignment := range opts.Environment {
 		args = append(args, "-e", assignment)
+	}
+	if len(opts.SessionOptions) > 0 || len(opts.PaneOptions) > 0 {
+		return t.newSessionWithOptions(args, opts)
 	}
 	if opts.Command != "" {
 		args = append(args, "--", opts.Command)

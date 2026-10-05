@@ -81,7 +81,17 @@ func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {
 			return "", fmt.Errorf("failed to read SSH bridge marker for %q: %w", session.Name, err)
 		}
 		if marker == identity {
-			return session.Name, nil
+			dead, err := c.tmux.IsPaneDead(session.ID)
+			if err != nil {
+				return "", fmt.Errorf("failed to inspect SSH bridge %q: %w", session.Name, err)
+			}
+			if !dead {
+				return session.Name, nil
+			}
+			if _, err := c.tmux.KillSession(session.ID); err != nil {
+				return "", fmt.Errorf("failed to remove stale SSH bridge %q: %w", session.Name, err)
+			}
+			delete(occupied, session.Name)
 		}
 	}
 	digest := sha256.Sum256([]byte(identity))
@@ -93,6 +103,14 @@ func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {
 		if _, err := c.tmux.NewSessionWithCommand(model.TmuxSessionOpts{
 			Name: name, Command: command,
 			Environment: []string{model.SSHBridgeIdentityEnv + "=" + identity},
+			SessionOptions: []model.TmuxOption{
+				{Name: "status", Value: "off"},
+				{Name: "detach-on-destroy", Value: "off"},
+			},
+			PaneOptions: []model.TmuxOption{
+				{Name: "remain-on-exit", Value: "failed"},
+				{Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."},
+			},
 		}); err != nil {
 			return "", fmt.Errorf("failed to create SSH bridge %q: %w", name, err)
 		}

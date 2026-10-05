@@ -16,9 +16,11 @@ func TestSSHBridgeCreatesMarkedSession(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
 	mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
 	mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
-		Name:        "sesh-ssh-71733fb26ad99c67e0bf6bbe-0",
-		Command:     `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
-		Environment: []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		Name:           "sesh-ssh-71733fb26ad99c67e0bf6bbe-0",
+		Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+		Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 	}).Return("", nil).Once()
 	c := &RealConnector{tmux: mTmux}
 
@@ -36,6 +38,7 @@ func TestSSHBridgeReusesExactMarkerRegardlessOfName(t *testing.T) {
 	}, nil).Once()
 	mTmux.EXPECT().GetSessionEnvironment("$1", "SESH_SSH_IDENTITY").Return("", nil).Once()
 	mTmux.EXPECT().GetSessionEnvironment("$8", "SESH_SSH_IDENTITY").Return("ssh/host/0", nil).Once()
+	mTmux.EXPECT().IsPaneDead("$8").Return(false, nil).Once()
 	c := &RealConnector{tmux: mTmux}
 
 	name, err := c.ensureSSHBridge("ssh/host/0")
@@ -52,9 +55,11 @@ func TestSSHBridgeDoesNotReuseMarkerPrefix(t *testing.T) {
 	mTmux.EXPECT().GetSessionEnvironment("$1", "SESH_SSH_IDENTITY").
 		Return("ssh/host/0\nextra", nil).Once()
 	mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
-		Name:        "sesh-ssh-71733fb26ad99c67e0bf6bbe-1",
-		Command:     `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
-		Environment: []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		Name:           "sesh-ssh-71733fb26ad99c67e0bf6bbe-1",
+		Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+		Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 	}).Return("", nil).Once()
 	c := &RealConnector{tmux: mTmux}
 
@@ -75,9 +80,11 @@ func TestSSHBridgeSkipsCollisionsAndLeavesSessionsVisible(t *testing.T) {
 	mTmux.EXPECT().GetSessionEnvironment("$4", "SESH_SSH_IDENTITY").Return("", nil).Once()
 	mTmux.EXPECT().GetSessionEnvironment("$9", "SESH_SSH_IDENTITY").Return("ssh/other/0", nil).Once()
 	mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
-		Name:        base + "-2",
-		Command:     `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
-		Environment: []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		Name:           base + "-2",
+		Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+		Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 	}).Return("", nil).Once()
 	c := &RealConnector{tmux: mTmux}
 
@@ -108,9 +115,11 @@ func TestSSHBridgeBoundedCollisionSlots(t *testing.T) {
 			mTmux.EXPECT().ListSessions().Return(sessions, nil).Once()
 			if occupied == 7 {
 				mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
-					Name:        base + "-7",
-					Command:     `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
-					Environment: []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+					Name:           base + "-7",
+					Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+					Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+					SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+					PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 				}).Return("", nil).Once()
 			}
 			c := &RealConnector{tmux: mTmux}
@@ -143,7 +152,9 @@ func TestSSHBridgeNamesUseCanonicalIdentity(t *testing.T) {
 			mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
 			mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
 				Name: tt.wantName, Command: command,
-				Environment: []string{"SESH_SSH_IDENTITY=" + tt.identity},
+				Environment:    []string{"SESH_SSH_IDENTITY=" + tt.identity},
+				SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+				PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 			}).Return("", nil).Once()
 			c := &RealConnector{tmux: mTmux}
 
@@ -157,7 +168,7 @@ func TestSSHBridgeNamesUseCanonicalIdentity(t *testing.T) {
 
 func TestSSHBridgePropagatesTmuxFailures(t *testing.T) {
 	wantErr := errors.New("tmux failure")
-	for _, stage := range []string{"list", "marker", "create"} {
+	for _, stage := range []string{"list", "marker", "pane", "kill", "create"} {
 		t.Run(stage, func(t *testing.T) {
 			mTmux := tmux.NewMockTmux(t)
 			switch stage {
@@ -166,12 +177,23 @@ func TestSSHBridgePropagatesTmuxFailures(t *testing.T) {
 			case "marker":
 				mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "user", ID: "$1"}}, nil).Once()
 				mTmux.EXPECT().GetSessionEnvironment("$1", "SESH_SSH_IDENTITY").Return("", wantErr).Once()
+			case "pane", "kill":
+				mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "bridge", ID: "$8"}}, nil).Once()
+				mTmux.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return("ssh/host/0", nil).Once()
+				if stage == "pane" {
+					mTmux.EXPECT().IsPaneDead("$8").Return(false, wantErr).Once()
+				} else {
+					mTmux.EXPECT().IsPaneDead("$8").Return(true, nil).Once()
+					mTmux.EXPECT().KillSession("$8").Return("", wantErr).Once()
+				}
 			case "create":
 				mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
 				mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
-					Name:        "sesh-ssh-71733fb26ad99c67e0bf6bbe-0",
-					Command:     `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
-					Environment: []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+					Name:           "sesh-ssh-71733fb26ad99c67e0bf6bbe-0",
+					Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+					Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+					SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+					PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
 				}).Return("", wantErr).Once()
 			}
 			c := &RealConnector{tmux: mTmux}
@@ -191,4 +213,27 @@ func TestSSHBridgeRejectsInvalidIdentityBeforeLookup(t *testing.T) {
 
 	require.ErrorContains(t, err, "non-canonical encoding")
 	assert.Empty(t, name)
+}
+
+func TestSSHBridgeReplacesDeadExactMarker(t *testing.T) {
+	m := tmux.NewMockTmux(t)
+	m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+		{Name: "sesh-ssh-71733fb26ad99c67e0bf6bbe-0", ID: "$1"},
+		{Name: "renamed dead bridge", ID: "$8"},
+	}, nil).Once()
+	m.EXPECT().GetSessionEnvironment("$1", model.SSHBridgeIdentityEnv).Return("", nil).Once()
+	marker := m.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return("ssh/host/0", nil).Once()
+	dead := m.EXPECT().IsPaneDead("$8").Return(true, nil).Once().NotBefore(marker)
+	kill := m.EXPECT().KillSession("$8").Return("", nil).Once().NotBefore(dead)
+	m.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
+		Name:           "sesh-ssh-71733fb26ad99c67e0bf6bbe-1",
+		Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+		Environment:    []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+		SessionOptions: []model.TmuxOption{{Name: "status", Value: "off"}, {Name: "detach-on-destroy", Value: "off"}},
+		PaneOptions:    []model.TmuxOption{{Name: "remain-on-exit", Value: "failed"}, {Name: "remain-on-exit-format", Value: "SSH exited (status #{pane_dead_status}). Reconnect with sesh to retry."}},
+	}).Return("", nil).Once().NotBefore(kill)
+	c := &RealConnector{tmux: m}
+	name, err := c.ensureSSHBridge("ssh/host/0")
+	require.NoError(t, err)
+	assert.Equal(t, "sesh-ssh-71733fb26ad99c67e0bf6bbe-1", name)
 }
