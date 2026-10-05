@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/joshmedeski/sesh/v2/model"
@@ -64,4 +65,58 @@ func TestSwitchClientTarget(t *testing.T) {
 	tm := NewTmux(os, s, "")
 	_, err := tm.SwitchClientTarget("/dev/ttys001", "sesh")
 	require.NoError(t, err)
+}
+
+func TestNewSessionWithCommand(t *testing.T) {
+	const command = `exec worker 'argument with spaces' "café"`
+	environment := []string{"MODE=fast", `LABEL=a=b 'quoted' $(); café`, "EMPTY="}
+	s := shell.NewMockShell(t)
+	s.EXPECT().Cmd("tmux", "new-session", "-d", "-s", "worker", "-c", "/work space",
+		"-e", "MODE=fast", "-e", `LABEL=a=b 'quoted' $(); café`, "-e", "EMPTY=", "--", command).
+		Return("created", nil).Once()
+	tm := NewTmux(nil, s, "")
+
+	output, err := tm.NewSessionWithCommand(model.TmuxSessionOpts{
+		Name: "worker", StartDir: "/work space", Command: command, Environment: environment,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "created", output)
+	assert.Equal(t, []string{"MODE=fast", `LABEL=a=b 'quoted' $(); café`, "EMPTY="}, environment)
+}
+
+func TestNewSessionWithCommandWithoutDirectoryOrEnvironment(t *testing.T) {
+	const command = `-worker 'quoted argument'; echo "$value"`
+	s := shell.NewMockShell(t)
+	s.EXPECT().Cmd("/opt/bin/tmux", "new-session", "-d", "-s", "worker", "--", command).
+		Return("", nil).Once()
+	tm := NewTmux(nil, s, "/opt/bin/tmux")
+
+	_, err := tm.NewSessionWithCommand(model.TmuxSessionOpts{Name: "worker", Command: command})
+
+	require.NoError(t, err)
+}
+
+func TestNewSessionWithCommandEmptyStartsDefaultShell(t *testing.T) {
+	s := shell.NewMockShell(t)
+	s.EXPECT().Cmd("tmux", "new-session", "-d", "-s", "worker", "-e", "MODE=fast").
+		Return("", nil).Once()
+	tm := NewTmux(nil, s, "")
+
+	_, err := tm.NewSessionWithCommand(model.TmuxSessionOpts{Name: "worker", Environment: []string{"MODE=fast"}})
+
+	require.NoError(t, err)
+}
+
+func TestNewSessionWithCommandPropagatesCreationFailure(t *testing.T) {
+	wantErr := errors.New("session creation failed")
+	s := shell.NewMockShell(t)
+	s.EXPECT().Cmd("tmux", "new-session", "-d", "-s", "worker", "--", "exec worker").
+		Return("diagnostic", wantErr).Once()
+	tm := NewTmux(nil, s, "")
+
+	output, err := tm.NewSessionWithCommand(model.TmuxSessionOpts{Name: "worker", Command: "exec worker"})
+
+	require.ErrorIs(t, err, wantErr)
+	assert.Equal(t, "diagnostic", output)
 }

@@ -12,6 +12,7 @@ type Tmux interface {
 	ListAllWindowNames(format string) (map[string][]string, error)
 	ListAllWindows() (map[string][]model.TmuxWindow, error)
 	NewSession(sessionName string, startDir string) (string, error)
+	NewSessionWithCommand(opts model.TmuxSessionOpts) (string, error)
 	NewWindowInSession(opts model.TmuxWindowOpts) (string, error)
 	IsAttached() bool
 	AttachSession(targetSession string) (string, error)
@@ -60,6 +61,20 @@ func (t *RealTmux) SendKeys(targetPane string, keys string) (string, error) {
 
 func (t *RealTmux) NewSession(sessionName string, startDir string) (string, error) {
 	return t.shell.Cmd(t.bin, "new-session", "-d", "-s", sessionName, "-c", startDir)
+}
+
+func (t *RealTmux) NewSessionWithCommand(opts model.TmuxSessionOpts) (string, error) {
+	args := []string{"new-session", "-d", "-s", opts.Name}
+	if opts.StartDir != "" {
+		args = append(args, "-c", opts.StartDir)
+	}
+	for _, assignment := range opts.Environment {
+		args = append(args, "-e", assignment)
+	}
+	if opts.Command != "" {
+		args = append(args, "--", opts.Command)
+	}
+	return t.shell.Cmd(t.bin, args...)
 }
 
 func (t *RealTmux) CapturePane(targetSession string) (string, error) {
