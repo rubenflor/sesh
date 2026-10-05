@@ -1,6 +1,8 @@
 package tmux
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -8,7 +10,49 @@ import (
 	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
+
+func TestListSessionsIncludesBridgeMetadata(t *testing.T) {
+	s := shell.NewMockShell(t)
+	tm := &RealTmux{shell: s, bin: "tmux"}
+	s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.MatchedBy(func(format string) bool {
+		return !strings.Contains(format, "#{SESH_SSH_IDENTITY}")
+	})).Return([]string{
+		"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::renamed-bridge::/tmp::2,1::2",
+		"1714092246::::0::::1714089765::1::::::::::::::0::$2::1714092245::0::0::sesh-ssh-user::/tmp::2,1::2",
+	}, nil).Once()
+	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
+		Return("SESH_SSH_IDENTITY=ssh/host/work%2F1", nil).Once()
+	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).
+		Return("", environmentExitError(t)).Once()
+	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$2").Return("OTHER=readable", nil).Once()
+
+	sessions, err := tm.ListSessions()
+
+	require.NoError(t, err)
+	require.Len(t, sessions, 2)
+	assert.Equal(t, "renamed-bridge", sessions[0].Name)
+	assert.Equal(t, "ssh/host/work%2F1", sessions[0].SSHBridgeIdentity)
+	assert.Equal(t, "sesh-ssh-user", sessions[1].Name)
+	assert.Empty(t, sessions[1].SSHBridgeIdentity)
+}
+
+func TestListSessionsPropagatesBridgeMarkerLookupFailure(t *testing.T) {
+	wantErr := errors.New("session disappeared")
+	s := shell.NewMockShell(t)
+	s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return([]string{
+		"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::normal::/tmp::2,1::2",
+	}, nil).Once()
+	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
+		Return("", wantErr).Once()
+
+	sessions, err := NewTmux(nil, s, "tmux").ListSessions()
+
+	require.ErrorIs(t, err, wantErr)
+	require.ErrorContains(t, err, "$1")
+	assert.Empty(t, sessions)
+}
 
 func TestListSessions(t *testing.T) {
 	t.Run("List tmux session", func(t *testing.T) {
@@ -17,8 +61,11 @@ func TestListSessions(t *testing.T) {
 		mockShell.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return([]string{"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::sesh/main::/Users/joshmedeski/c/sesh/main::2,1::2"},
 			nil,
 		)
+		mockShell.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
+			Return("", nil).Once()
 		sessions, err := tmux.ListSessions()
 		assert.Nil(t, err)
+		require.Len(t, sessions, 1)
 		for _, session := range sessions {
 			assert.Equal(t, "sesh/main", session.Name)
 			assert.Equal(t, "/Users/joshmedeski/c/sesh/main", session.Path)
@@ -31,6 +78,7 @@ func TestListSessions(t *testing.T) {
 		}
 		sessions, err := parseTmuxSessionsOutput(rawSessions)
 		assert.Nil(t, err)
+		require.Len(t, sessions, 1)
 
 		expectedName := "sesh/main"
 		expectedPath := "/Users/joshmedeski/c/sesh/main"

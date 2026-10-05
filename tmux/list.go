@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -16,6 +17,13 @@ func (t *RealTmux) ListSessions() ([]*model.TmuxSession, error) {
 	sessions, err := parseTmuxSessionsOutput(output)
 	if err != nil {
 		return nil, err
+	}
+	for _, session := range sessions {
+		marker, err := t.GetSessionEnvironment(session.ID, model.SSHBridgeIdentityEnv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read SSH bridge marker for session %q: %w", session.ID, err)
+		}
+		session.SSHBridgeIdentity = marker
 	}
 	sortedSessions := sortByLastAttached(sessions)
 	return sortedSessions, nil

@@ -30,11 +30,14 @@ func listTmuxPanes(l *RealLister) (model.SeshSessions, error) {
 		pane    *model.TmuxPane
 		rawName string
 	}
-	entries := make([]paneEntry, len(tmuxPanes))
+	entries := make([]paneEntry, 0, len(tmuxPanes))
 	nameCounts := make(map[string]int)
-	for i, pane := range tmuxPanes {
+	for _, pane := range tmuxPanes {
+		if pane.SSHBridgeIdentity != "" {
+			continue
+		}
 		rawName := fmt.Sprintf("%s/%s", pane.WindowName, tmuxPaneDisplayName(pane))
-		entries[i] = paneEntry{pane: pane, rawName: rawName}
+		entries = append(entries, paneEntry{pane: pane, rawName: rawName})
 		nameCounts[rawName]++
 	}
 

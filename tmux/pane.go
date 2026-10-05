@@ -17,23 +17,40 @@ func listpanesformat() string {
 		"#{pane_current_command}",
 		"#{pane_current_path}",
 		"#{pane_id}",
+		"#{session_id}",
 	}
 	return strings.Join(variables, separator)
 }
 
 func (t *RealTmux) ListTmuxPanes() ([]*model.TmuxPane, error) {
-	output, err := t.shell.ListCmd("tmux", "list-panes", "-s", "-F", listpanesformat())
+	output, err := t.shell.ListCmd(t.bin, "list-panes", "-s", "-F", listpanesformat())
 	if err != nil {
 		return []*model.TmuxPane{}, nil
 	}
-	return parseTmuxPanesOutput(output)
+	panes, err := parseTmuxPanesOutput(output)
+	if err != nil {
+		return nil, err
+	}
+	markers := make(map[string]string)
+	for _, pane := range panes {
+		marker, found := markers[pane.SessionID]
+		if !found {
+			marker, err = t.GetSessionEnvironment(pane.SessionID, model.SSHBridgeIdentityEnv)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read SSH bridge marker for pane %q in session %q: %w", pane.PaneID, pane.SessionID, err)
+			}
+			markers[pane.SessionID] = marker
+		}
+		pane.SSHBridgeIdentity = marker
+	}
+	return panes, nil
 }
 
 func parseTmuxPanesOutput(rawList []string) ([]*model.TmuxPane, error) {
 	panes := make([]*model.TmuxPane, 0, len(rawList))
 	for _, line := range rawList {
 		fields := strings.Split(line, separator)
-		if len(fields) != 7 {
+		if len(fields) != 8 {
 			continue
 		}
 		panes = append(panes, &model.TmuxPane{
@@ -44,6 +61,7 @@ func parseTmuxPanesOutput(rawList []string) ([]*model.TmuxPane, error) {
 			PaneCommand: fields[4],
 			PanePath:    fields[5],
 			PaneID:      fields[6],
+			SessionID:   fields[7],
 		})
 	}
 	return panes, nil

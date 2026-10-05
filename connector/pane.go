@@ -56,6 +56,9 @@ func connectToTmuxPane(c *RealConnector, connection model.Connection, _ model.Co
 	}
 
 	for _, pane := range panes {
+		if pane.SSHBridgeIdentity != "" {
+			continue
+		}
 		paneKey := fmt.Sprintf("tmux-pane:%s/%s", pane.WindowName, pane.PaneID)
 		if paneKey == targetPaneKey {
 			return c.tmux.SelectPane(pane.WindowIndex, pane.PaneIndex)

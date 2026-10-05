@@ -12,7 +12,34 @@ import (
 	"github.com/joshmedeski/sesh/v2/tmuxinator"
 	"github.com/joshmedeski/sesh/v2/zoxide"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestTmuxDiscoveryFiltersBridgeMarkersBeforeConversion(t *testing.T) {
+	m := tmux.NewMockTmux(t)
+	m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+		{Name: "current", Path: "/current"},
+		{Name: "renamed-bridge", Path: "/bridge", SSHBridgeIdentity: "ssh/host/0"},
+		{Name: "sesh-ssh-user", Path: "/user"},
+	}, nil)
+	l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
+
+	sessions, err := l.List(ListOptions{Tmux: true})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"tmux:current", "tmux:sesh-ssh-user"}, sessions.OrderedIndex)
+	assert.Len(t, sessions.Directory, 2)
+	_, found := l.FindTmuxSession("renamed-bridge")
+	assert.False(t, found)
+	_, found = l.FindTmuxSessionByBase("renamed-bridge")
+	assert.False(t, found)
+	user, found := l.FindTmuxSession("sesh-ssh-user")
+	require.True(t, found)
+	assert.Equal(t, "/user", user.Path)
+	last, found := l.GetLastTmuxSession()
+	require.True(t, found)
+	assert.Equal(t, "sesh-ssh-user", last.Name)
+}
 
 func TestListTmuxSessions(t *testing.T) {
 	mockTmux := new(tmux.MockTmux)

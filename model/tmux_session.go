@@ -13,6 +13,7 @@ type TmuxSession struct {
 	Path              string
 	Name              string
 	ID                string
+	SSHBridgeIdentity string
 	AttachedList      []string
 	GroupList         []string
 	GroupAttachedList []string

@@ -12,6 +12,7 @@ import (
 	"github.com/joshmedeski/sesh/v2/tmuxinator"
 	"github.com/joshmedeski/sesh/v2/zoxide"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func makeTmuxPane(windowIndex int, windowName string, paneIndex int, paneTitle, paneCommand, panePath, paneID string) *model.TmuxPane {
@@ -28,6 +29,27 @@ func makeTmuxPane(windowIndex int, windowName string, paneIndex int, paneTitle, 
 
 func TestListTmuxPanes(t *testing.T) {
 	hostname, _ := os.Hostname()
+
+	t.Run("excludes marked bridge panes before naming visible panes", func(t *testing.T) {
+		mockTmux := tmux.NewMockTmux(t)
+		mockTmux.EXPECT().ListTmuxPanes().Return([]*model.TmuxPane{
+			{WindowName: "editor", PaneCommand: "zsh", PanePath: "/p/repo", PaneID: "%1", SessionID: "$1"},
+			{WindowName: "editor", PaneCommand: "zsh", PanePath: "/p/bridge", PaneID: "%2", SessionID: "$2", SSHBridgeIdentity: "ssh/host/work"},
+			{WindowName: "sesh-ssh-user", PaneCommand: "zsh", PanePath: "/p/user", PaneID: "%3", SessionID: "$3"},
+		}, nil).Once()
+		lister := NewLister(model.Config{}, new(home.MockHome), mockTmux, new(zoxide.MockZoxide), new(tmuxinator.MockTmuxinator), nil, nil, nil)
+
+		sessions, err := lister.ListTmuxPanes()
+
+		require.NoError(t, err)
+		require.Equal(t, model.SeshSessions{
+			OrderedIndex: []string{"tmux-pane:editor/%1", "tmux-pane:sesh-ssh-user/%3"},
+			Directory: map[string]model.SeshSession{
+				"tmux-pane:editor/%1":        {Src: "tmux-pane", Name: "editor/zsh", Path: "/p/repo"},
+				"tmux-pane:sesh-ssh-user/%3": {Src: "tmux-pane", Name: "sesh-ssh-user/zsh", Path: "/p/user"},
+			},
+		}, sessions)
+	})
 
 	t.Run("should list tmux panes", func(t *testing.T) {
 		mockTmux := new(tmux.MockTmux)

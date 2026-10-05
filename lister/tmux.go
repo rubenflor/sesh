@@ -62,6 +62,9 @@ func listTmux(l *RealLister) (model.SeshSessions, error) {
 	orderedIndex := []string{}
 
 	for _, session := range tmuxSessions {
+		if session.SSHBridgeIdentity != "" {
+			continue
+		}
 		key := tmuxKey(session.Name)
 		orderedIndex = append(orderedIndex, key)
 		directory[key] = tmuxToSesh(session, aliases)
