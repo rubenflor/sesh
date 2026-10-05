@@ -109,14 +109,6 @@ func TestResolveSSHRejectsInvalidTargetsWithoutLocalOperations(t *testing.T) {
 	}
 }
 
-func TestConnectSSHWithoutRegisteredHandlerReturnsError(t *testing.T) {
-	c := sshResolver(t, model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}})
-
-	_, err := c.Connect("ssh/host/0", model.ConnectOpts{})
-
-	require.ErrorContains(t, err, `no connector for source "ssh"`)
-}
-
 func TestConnectWindowRejectsSSHAsLocalTarget(t *testing.T) {
 	c := sshResolver(t, model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}})
 

@@ -9,6 +9,7 @@ import (
 	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/stretchr/testify/assert"
 	mock "github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // stubNoClients makes ResolveClient come up empty, so SwitchOrAttach falls back
@@ -100,4 +101,42 @@ func TestCustomBin(t *testing.T) {
 		assert.Equal(t, "attaching to tmux session: dotfiles", response)
 		mockShell.AssertCalled(t, "CmdWithOutput", "psmux", "attach-session", "-t", "dotfiles")
 	})
+}
+
+func TestSwitchOrAttachSSHBridge(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		switchTo bool
+		attached bool
+	}{
+		{"plain outside tmux attaches", false, false},
+		{"plain inside tmux switches", false, true},
+		{"external switch targets attached client", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const bridge = "sesh-ssh-71733fb26ad99c67e0bf6bbe-0"
+			mOs := oswrap.NewMockOs(t)
+			mShell := shell.NewMockShell(t)
+			want := "switching to tmux session: " + bridge
+			if tt.switchTo {
+				mOs.EXPECT().Getenv("SESH_CLIENT").Return("/dev/ttys002").Once()
+				mShell.EXPECT().Cmd("tmux", "switch-client", "-c", "/dev/ttys002", "-t", bridge).Return("", nil).Once()
+			} else if tt.attached {
+				mOs.EXPECT().Getenv("TMUX").Return("/tmp/tmux-501/default,72439,4").Twice()
+				mOs.EXPECT().Getenv("SESH_CLIENT").Return("").Once()
+				mOs.EXPECT().Getenv("TMUX_PANE").Return("%1").Once()
+				mShell.EXPECT().Cmd("tmux", "switch-client", "-t", bridge).Return("", nil).Once()
+			} else {
+				mOs.EXPECT().Getenv("TMUX").Return("").Once()
+				mShell.EXPECT().CmdWithOutput("tmux", "attach-session", "-t", bridge).Return("", nil).Once()
+				want = "attaching to tmux session: " + bridge
+			}
+			tm := NewTmux(mOs, mShell, "")
+
+			response, err := tm.SwitchOrAttach(bridge, model.ConnectOpts{Switch: tt.switchTo})
+
+			require.NoError(t, err)
+			assert.Equal(t, want, response)
+		})
+	}
 }

@@ -26,6 +26,27 @@ func sshStrategy(c *RealConnector, name string) (model.Connection, error) {
 	}, nil
 }
 
+func connectToSSH(c *RealConnector, connection model.Connection, opts model.ConnectOpts) (string, error) {
+	identity := connection.Session.Name
+	if opts.Switch {
+		clients, err := c.tmux.ListClients()
+		if err != nil {
+			return "", fmt.Errorf("couldn't reach tmux to switch to SSH session %q: %w", identity, err)
+		}
+		if len(clients) == 0 {
+			return "", fmt.Errorf("cannot switch to SSH session %q: no attached local tmux client; attach a local client or run sesh connect without --switch", identity)
+		}
+	}
+	bridge, err := c.ensureSSHBridge(identity)
+	if err != nil {
+		return "", err
+	}
+	if _, err := c.focusSession(bridge, opts.Switch); err != nil {
+		return "", fmt.Errorf("failed to connect to SSH session %q: %w", identity, err)
+	}
+	return fmt.Sprintf("connected to SSH session: %s", identity), nil
+}
+
 // sshAttachCommand builds the initial pane command for a canonical SSH identity.
 func sshAttachCommand(identity string) (string, error) {
 	host, session, err := model.ParseSSHIdentity(identity)

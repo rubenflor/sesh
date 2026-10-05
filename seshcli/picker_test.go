@@ -9,6 +9,7 @@ import (
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/picker"
+	"github.com/joshmedeski/sesh/v2/tmux"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -33,10 +34,19 @@ func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
 		assert.Empty(t, selected.Path)
 		return selected.Name, nil
 	}).Once()
-	mockConnector := connector.NewMockConnector(t)
-	mockConnector.On("Connect", identity, model.ConnectOpts{}).Return("", nil).Once()
+	const bridge = "sesh-ssh-f89c7664900e54d378d5c534-0"
+	mTmux := tmux.NewMockTmux(t)
+	mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
+	mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
+		Name:        bridge,
+		Command:     `exec ssh -tt -- 'first' 'tmux attach-session -t '\''=nutiliti/2345% café'\'''`,
+		Environment: []string{"SESH_SSH_IDENTITY=ssh/first/nutiliti%2F2345%25%20caf%C3%A9"},
+	}).Return("", nil).Once()
+	mTmux.EXPECT().SwitchOrAttach(bridge, model.ConnectOpts{}).Return("", nil).Once()
 	deps.Picker = mockPicker
-	deps.Connector = mockConnector
+	deps.Connector = connector.NewConnector(deps.Config,
+		nil, nil, deps.Lister, nil, nil, mTmux, nil, nil, nil,
+	)
 	cmd := newPickerCommand(&deps.BaseDeps, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
 	cmd.SetArgs([]string{"--ssh"})
 

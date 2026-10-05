@@ -145,3 +145,121 @@ func TestConnectToTmuxDetachedReportsUnreachableTmux(t *testing.T) {
 	_, err := connectToTmux(c, conn, model.ConnectOpts{Switch: true})
 	require.ErrorContains(t, err, "couldn't reach tmux to switch to 'nutiliti/2345'")
 }
+
+func TestConnectSSHCreatesBridgeAndAttaches(t *testing.T) {
+	const identity = "ssh/host/0"
+	const bridge = "sesh-ssh-71733fb26ad99c67e0bf6bbe-0"
+	mTmux := tmux.NewMockTmux(t)
+	mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
+	mTmux.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
+		Name:        bridge,
+		Command:     `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
+		Environment: []string{"SESH_SSH_IDENTITY=ssh/host/0"},
+	}).Return("", nil).Once()
+	mTmux.EXPECT().SwitchOrAttach(bridge, model.ConnectOpts{}).
+		Return("attaching to tmux session: "+bridge, nil).Once()
+	c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}},
+		dir.NewMockDir(t), home.NewMockHome(t), lister.NewMockLister(t), namer.NewMockNamer(t),
+		startup.NewMockStartup(t), mTmux, zoxide.NewMockZoxide(t),
+		tmuxinator.NewMockTmuxinator(t), focuser.NewMockFocuser(t),
+	)
+
+	response, err := c.Connect(identity, model.ConnectOpts{})
+
+	require.NoError(t, err)
+	assert.Equal(t, "connected to SSH session: "+identity, response)
+}
+
+func TestConnectSSHSwitchChecksClientBeforeBridgeAccess(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		clientErr error
+		wantError string
+	}{
+		{"no attached client", nil, "no attached local tmux client"},
+		{"unreachable tmux", errors.New("tmux unavailable"), "tmux unavailable"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mTmux := tmux.NewMockTmux(t)
+			mTmux.EXPECT().ListClients().Return(nil, tt.clientErr).Once()
+			c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}},
+				dir.NewMockDir(t), home.NewMockHome(t), lister.NewMockLister(t), namer.NewMockNamer(t),
+				startup.NewMockStartup(t), mTmux, zoxide.NewMockZoxide(t),
+				tmuxinator.NewMockTmuxinator(t), focuser.NewMockFocuser(t),
+			)
+
+			response, err := c.Connect("ssh/host/0", model.ConnectOpts{Switch: true})
+
+			require.ErrorContains(t, err, tt.wantError)
+			assert.Empty(t, response)
+			if tt.clientErr == nil {
+				assert.Contains(t, err.Error(), "without --switch")
+			}
+		})
+	}
+}
+
+func TestConnectSSHReusesBridge(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		switchTo bool
+		attached bool
+	}{
+		{"plain connect", false, false},
+		{"switch inside tmux", true, true},
+		{"switch outside tmux", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const identity = "ssh/host/0"
+			const bridge = "renamed bridge"
+			mTmux := tmux.NewMockTmux(t)
+			mFocuser := focuser.NewMockFocuser(t)
+			mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: bridge, ID: "$8"}}, nil).Once()
+			mTmux.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return(identity, nil).Once()
+			if tt.switchTo {
+				clientChecks := 1
+				if !tt.attached {
+					clientChecks++
+				}
+				mTmux.EXPECT().ListClients().Return([]model.TmuxClient{{Name: "/dev/ttys002"}}, nil).Times(clientChecks)
+				mTmux.EXPECT().IsAttached().Return(tt.attached).Once()
+			}
+			if tt.switchTo && !tt.attached {
+				mTmux.EXPECT().ResolveClient().Return("/dev/ttys002").Once()
+				mTmux.EXPECT().SwitchClientTarget("/dev/ttys002", bridge).Return("", nil).Once()
+				mFocuser.EXPECT().Activate("wezterm").Return(true, nil).Once()
+			} else {
+				mTmux.EXPECT().SwitchOrAttach(bridge, model.ConnectOpts{Switch: tt.switchTo}).Return("", nil).Once()
+			}
+			c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}, Terminal: "wezterm"},
+				dir.NewMockDir(t), home.NewMockHome(t), lister.NewMockLister(t), namer.NewMockNamer(t),
+				startup.NewMockStartup(t), mTmux, zoxide.NewMockZoxide(t), tmuxinator.NewMockTmuxinator(t), mFocuser,
+			)
+
+			response, err := c.Connect(identity, model.ConnectOpts{Switch: tt.switchTo})
+
+			require.NoError(t, err)
+			assert.Equal(t, "connected to SSH session: "+identity, response)
+		})
+	}
+}
+
+func TestConnectSSHReportsAttachFailure(t *testing.T) {
+	const identity = "ssh/host/0"
+	mTmux := tmux.NewMockTmux(t)
+	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "bridge", ID: "$8"}}, nil).Once()
+	mTmux.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return(identity, nil).Once()
+	wantErr := errors.New("terminal unavailable")
+	mTmux.EXPECT().SwitchOrAttach("bridge", model.ConnectOpts{}).Return("", wantErr).Once()
+	c := NewConnector(model.Config{SSH: model.SSHConfig{Hosts: []string{"host"}}},
+		dir.NewMockDir(t), home.NewMockHome(t), lister.NewMockLister(t), namer.NewMockNamer(t),
+		startup.NewMockStartup(t), mTmux, zoxide.NewMockZoxide(t),
+		tmuxinator.NewMockTmuxinator(t), focuser.NewMockFocuser(t),
+	)
+
+	response, err := c.Connect(identity, model.ConnectOpts{})
+
+	require.ErrorIs(t, err, wantErr)
+	assert.Contains(t, err.Error(), identity)
+	assert.Empty(t, response)
+}

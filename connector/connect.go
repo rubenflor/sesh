@@ -44,6 +44,7 @@ func (c *RealConnector) Resolve(name string) (model.Connection, error) {
 // TODO: send to logging (local txt file?)
 func (c *RealConnector) Connect(name string, opts model.ConnectOpts) (string, error) {
 	connectStrategy := map[string]func(c *RealConnector, connection model.Connection, opts model.ConnectOpts) (string, error){
+		"ssh":             connectToSSH,
 		"tmux-pane":       connectToTmuxPane,
 		"tmux":            connectToTmux,
 		"tmuxinator":      connectToTmuxinator,
