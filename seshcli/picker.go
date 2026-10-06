@@ -1,6 +1,7 @@
 package seshcli
 
 import (
+	"context"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -36,8 +37,11 @@ func newPickerCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*De
 			ssh, _ := cmd.Flags().GetBool("ssh")
 			hideDuplicates, _ := cmd.Flags().GetBool("hide-duplicates")
 
+			discoveryCtx, cancelDiscovery := context.WithCancel(cmd.Context())
+			defer cancelDiscovery()
+
 			listerOpts := lister.ListOptions{
-				Context:        cmd.Context(),
+				Context:        discoveryCtx,
 				Config:         config,
 				HideAttached:   hideAttached,
 				Tmux:           tmux,
@@ -50,7 +54,7 @@ func newPickerCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*De
 			fetchFunc := func() (model.SeshSessions, error) {
 				fetchMu.Lock()
 				defer fetchMu.Unlock()
-				if err := cmd.Context().Err(); err != nil {
+				if err := discoveryCtx.Err(); err != nil {
 					return model.SeshSessions{}, err
 				}
 				return deps.Lister.List(listerOpts)
@@ -100,11 +104,12 @@ func newPickerCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*De
 			}
 
 			chosen, err := deps.Picker.Pick(fetchFunc, pickerOpts)
+			// Bubble Tea may leave active or queued fetch commands on any exit.
+			// Cancel before waiting; late fetches must not start new probes.
+			cancelDiscovery()
+			fetchMu.Lock()
+			fetchMu.Unlock()
 			if contextErr := cmd.Context().Err(); contextErr != nil {
-				// Bubble Tea can return while a fetch command is still running.
-				// Wait for discovery to terminate/reap its probes before CLI exit.
-				fetchMu.Lock()
-				fetchMu.Unlock()
 				return contextErr
 			}
 			if err != nil {

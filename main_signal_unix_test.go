@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -36,11 +37,17 @@ func TestCLISignalsCancelSSHDiscovery(t *testing.T) {
 		signals := []syscall.Signal{syscall.SIGINT, syscall.SIGTERM}
 		if command == "list" {
 			signals = append(signals, 0)
+		} else {
+			signals = append(signals, -1, -2)
 		} // Real five-second probe deadline.
 		for _, sig := range signals {
 			label := sig.String()
 			if sig == 0 {
 				label = "deadline"
+			} else if sig == -1 {
+				label = "GOMAXPROCS=1/Escape"
+			} else if sig == -2 {
+				label = "GOMAXPROCS=1/Ctrl+C"
 			}
 			t.Run(fmt.Sprintf("%s/%s", command, label), func(t *testing.T) {
 				dir := t.TempDir()
@@ -66,7 +73,7 @@ func TestCLISignalsCancelSSHDiscovery(t *testing.T) {
 				} else {
 					process = exec.CommandContext(ctx, wrapper)
 				}
-				process.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "SESH_SIGNAL_HELPER="+os.Args[0], "SESH_SIGNAL_DIR="+dir, "SESH_SIGNAL_CLI="+bin, "SESH_SIGNAL_CONFIG="+config, "SESH_SIGNAL_COMMAND="+command, "TERM=xterm-256color", "ENV=", "XDG_CACHE_HOME="+dir)
+				process.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "SESH_SIGNAL_HELPER="+os.Args[0], "SESH_SIGNAL_DIR="+dir, "SESH_SIGNAL_CLI="+bin, "SESH_SIGNAL_CONFIG="+config, "SESH_SIGNAL_COMMAND="+command, "TERM=xterm-256color", "ENV=", "XDG_CACHE_HOME="+dir, "GOMAXPROCS=1")
 				var output bytes.Buffer
 				input, err := process.StdinPipe()
 				if err != nil {
@@ -93,11 +100,21 @@ func TestCLISignalsCancelSSHDiscovery(t *testing.T) {
 				})
 				pid := waitSignalPID(t, dir, "parent", done)
 				cli := waitSignalPID(t, dir, "cli", done)
+				descendant := waitSignalPID(t, dir, "descendant", done)
 				allowance := 3 * time.Second
 				message := "context canceled"
 				if sig == 0 {
 					allowance = 8 * time.Second
 					message = "all configured ssh hosts failed"
+				} else if sig < 0 {
+					message = ""
+					key := "\x1b"
+					if sig == -2 {
+						key = "\x03"
+					}
+					if _, err := io.WriteString(input, key); err != nil {
+						t.Fatal(err)
+					}
 				} else {
 					if err := syscall.Kill(cli, sig); err != nil {
 						t.Fatal(err)
@@ -105,6 +122,9 @@ func TestCLISignalsCancelSSHDiscovery(t *testing.T) {
 				}
 				select {
 				case err := <-done:
+					if sig < 0 && err != nil {
+						t.Fatalf("picker key exit failed: %v; output %s", err, &output)
+					}
 					if command == "list" {
 						var exitErr *exec.ExitError
 						if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
@@ -114,6 +134,7 @@ func TestCLISignalsCancelSSHDiscovery(t *testing.T) {
 					if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
 						t.Fatalf("CLI exited without terminating/reaping SSH PID %d: %v; output %s", pid, err, &output)
 					}
+					assertSignalDescendantGone(t, descendant)
 					if !strings.Contains(strings.ToLower(output.String()), message) {
 						t.Fatalf("CLI did not report %q: %s", message, &output)
 					}
@@ -175,6 +196,7 @@ func TestSSHSignalHelper(t *testing.T) {
 	if len(os.Args) < 3 || os.Args[len(os.Args)-2] != "--" {
 		return
 	}
+	signal.Ignore(syscall.SIGHUP)
 	dir, mode := os.Getenv("SESH_SIGNAL_DIR"), os.Args[len(os.Args)-1]
 	if mode == "parent" {
 		child := exec.Command(os.Args[0], "-test.run=^TestSSHSignalHelper$", "--", "descendant")
@@ -194,4 +216,17 @@ func TestSSHSignalHelper(t *testing.T) {
 	}
 	time.Sleep(30 * time.Second)
 	os.Exit(0)
+}
+
+func assertSignalDescendantGone(t *testing.T, pid int) {
+	t.Helper()
+	if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		return
+	}
+	// Zombies have terminated and cannot retain inherited output pipes.
+	output, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err == nil && strings.HasPrefix(strings.TrimSpace(string(output)), "Z") {
+		return
+	}
+	t.Fatalf("CLI exited with live SSH descendant %d: %s (%v)", pid, output, err)
 }

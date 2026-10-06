@@ -2,7 +2,10 @@ package seshcli
 
 import (
 	"context"
+	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/joshmedeski/sesh/v2/connector"
 	"github.com/joshmedeski/sesh/v2/execwrap"
@@ -63,7 +66,9 @@ func TestPickerSSHOnly(t *testing.T) {
 		Directory:    model.SeshSessionMap{"ssh:ssh/server/0": {Src: "ssh", Name: "ssh/server/0"}},
 	}
 	mockLister := lister.NewMockLister(t)
-	mockLister.On("List", lister.ListOptions{Context: ctx, SSH: true}).Return(sessions, nil).Once()
+	mockLister.On("List", mock.MatchedBy(func(opts lister.ListOptions) bool {
+		return opts.SSH && opts.Context != ctx && opts.Context.Err() == nil
+	})).Return(sessions, nil).Once()
 	mockPicker := picker.NewMockPicker(t)
 	mockPicker.On("Pick", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		got, err := args.Get(0).(picker.FetchFunc)()
@@ -86,7 +91,13 @@ func TestPickerSSHSourceSelection(t *testing.T) {
 			wantOpts := tt.opts
 			wantOpts.Context = ctx
 			mockLister := lister.NewMockLister(t)
-			mockLister.On("List", wantOpts).Return(tt.sessions, nil).Once()
+			mockLister.On("List", mock.MatchedBy(func(opts lister.ListOptions) bool {
+				if opts.Context == nil || opts.Context == ctx {
+					return false
+				}
+				opts.Context = ctx
+				return reflect.DeepEqual(opts, wantOpts)
+			})).Return(tt.sessions, nil).Once()
 			mockPicker := picker.NewMockPicker(t)
 			mockPicker.On("Pick", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 				got, err := args.Get(0).(picker.FetchFunc)()
@@ -121,4 +132,95 @@ func TestPickerSSHFlag(t *testing.T) {
 	tmux, err := cmd.Flags().GetBool("tmux")
 	require.NoError(t, err)
 	assert.True(t, tmux, "source flags must remain independently selectable")
+}
+
+func TestPickerExitCancelsAndWaitsForDiscovery(t *testing.T) {
+	for _, mode := range []string{"quit", "selection", "error", "parent cancellation"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			started, cancelled, release, fetchDone := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var releaseOnce sync.Once
+			releaseCleanup := func() { releaseOnce.Do(func() { close(release) }) }
+			defer releaseCleanup()
+			ml := lister.NewMockLister(t)
+			ml.On("List", mock.Anything).Run(func(args mock.Arguments) {
+				discoveryCtx := args.Get(0).(lister.ListOptions).Context
+				close(started)
+				<-discoveryCtx.Done()
+				close(cancelled)
+				<-release
+			}).Return(model.SeshSessions{}, context.Canceled).Once()
+			pk := picker.NewMockPicker(t)
+			var lateFetch picker.FetchFunc
+			queuedDone := make(chan error, 1)
+			pk.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, opts picker.PickerOptions) (string, error) {
+				assert.Equal(t, ctx, opts.Context)
+				lateFetch = fetch
+				go func() { _, _ = fetch(); close(fetchDone) }()
+				<-started
+				go func() { _, err := fetch(); queuedDone <- err }()
+				switch mode {
+				case "selection":
+					return "local", nil
+				case "error":
+					return "", assert.AnError
+				case "parent cancellation":
+					cancel()
+				}
+				return "", nil
+			})
+			mc := connector.NewMockConnector(t)
+			if mode == "selection" {
+				mc.EXPECT().Connect("local", model.ConnectOpts{}).Run(func(string, model.ConnectOpts) {
+					select {
+					case <-release:
+					default:
+						t.Error("connected before discovery cleanup")
+					}
+					assert.NoError(t, ctx.Err())
+				}).Return("", nil).Once()
+			}
+			deps := &Deps{Lister: ml, Picker: pk, Connector: mc}
+			cmd := newPickerCommand(nil, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
+			cmd.SilenceErrors, cmd.SilenceUsage = true, true
+			done := make(chan error, 1)
+			go func() { done <- cmd.ExecuteContext(ctx) }()
+			select {
+			case <-cancelled:
+			case <-time.After(5 * time.Second):
+				t.Fatal("discovery was not cancelled")
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("returned before fetch cleanup: %v", err)
+			case <-time.After(100 * time.Millisecond):
+			}
+			releaseCleanup()
+			select {
+			case err := <-done:
+				if mode == "error" {
+					require.ErrorIs(t, err, assert.AnError)
+				} else if mode == "parent cancellation" {
+					require.ErrorIs(t, err, context.Canceled)
+				} else {
+					require.NoError(t, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("picker did not finish cleanup")
+			}
+			<-fetchDone
+			select {
+			case err := <-queuedDone:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(5 * time.Second):
+				t.Fatal("queued fetch did not finish")
+			}
+			_, err := lateFetch()
+			require.ErrorIs(t, err, context.Canceled, "late fetch must not reach lister")
+			if mode != "parent cancellation" {
+				require.NoError(t, ctx.Err())
+			}
+		})
+	}
 }
