@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 
 	"github.com/joshmedeski/sesh/v2/model"
-	"github.com/joshmedeski/sesh/v2/tmux"
 )
 
 // ConnectWindow selects the named window in the target session, creating it
@@ -15,11 +14,7 @@ import (
 // asked for with opts.New, which allows windows to share a name; a later
 // connect to that name reuses the lowest-indexed one.
 func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, error) {
-	session, err := c.targetSession(opts.Session)
-	if err != nil {
-		return "", err
-	}
-	sessionID, err := tmux.LocalSessionID(c.tmux, session.Name)
+	session, sessionID, err := c.targetSession(opts.Session)
 	if err != nil {
 		return "", err
 	}

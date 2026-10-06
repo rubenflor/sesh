@@ -11,7 +11,7 @@ import (
 )
 
 type Startup interface {
-	Exec(session model.SeshSession) (string, error)
+	Exec(session model.SeshSession, sessionID string) (string, error)
 }
 
 type RealStartup struct {
@@ -28,7 +28,8 @@ func NewStartup(
 	return &RealStartup{lister, tmux, config, home, replacer}
 }
 
-func (s *RealStartup) Exec(session model.SeshSession) (string, error) {
+// Exec keeps the public name for config lookup and uses the verified ID for tmux.
+func (s *RealStartup) Exec(session model.SeshSession, sessionID string) (string, error) {
 	strategies := []func(*RealStartup, model.SeshSession) (string, error){
 		configStrategy,
 		configWildcardStartupStrategy,
@@ -71,21 +72,21 @@ func (s *RealStartup) Exec(session model.SeshSession) (string, error) {
 		if ret, err := s.tmux.NewWindowInSession(model.TmuxWindowOpts{
 			Name:          windowConfig.Name,
 			StartDir:      windowConfig.Path,
-			TargetSession: session.Name,
+			TargetSession: sessionID,
 		}); err != nil {
 			return ret, err
 		}
-		if ret, err := s.tmux.SendKeys(session.Name, windowConfig.StartupScript); err != nil {
+		if ret, err := s.tmux.SendKeys(sessionID, windowConfig.StartupScript); err != nil {
 			return ret, err
 		}
 	}
-	s.tmux.NextWindowInSession(session.Name)
+	s.tmux.NextWindowInSession(sessionID)
 
 	for _, strategy := range strategies {
 		if command, err := strategy(s, session); err != nil {
 			return "", fmt.Errorf("failed to determine startup command: %w", err)
 		} else if command != "" {
-			s.tmux.SendKeys(session.Name, command)
+			s.tmux.SendKeys(sessionID, command)
 			return fmt.Sprintf("executing startup command: %s", command), nil
 		}
 	}

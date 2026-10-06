@@ -233,3 +233,123 @@ func TestLocalOperationsUseVerifiedIDsOnPrivateTmux(t *testing.T) {
 		})
 	}
 }
+
+// Creation must resolve the literal name before delivering any startup keys.
+// Only attach is injected; all other operations use the private real server.
+func TestNewLocalSessionUsesVerifiedIDOnPrivateTmux(t *testing.T) {
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Skip("tmux is not installed")
+	}
+	for _, name := range []string{"$0", "ordinary", "sesh-ssh-user"} {
+		for _, mode := range []string{"startup", "command", "window", "rename"} {
+			if mode == "rename" && name != "$0" {
+				continue
+			}
+			t.Run(name+"/"+mode, func(t *testing.T) {
+				t.Setenv("TMUX", "")
+				dir, err := os.MkdirTemp("/tmp", "sesh-new-target-")
+				require.NoError(t, err)
+				socket := filepath.Join(dir, "socket")
+				run := func(args ...string) string {
+					t.Helper()
+					out, err := exec.Command(binary, append([]string{"-S", socket, "-f", "/dev/null"}, args...)...).CombinedOutput()
+					require.NoError(t, err, "%s", out)
+					return strings.TrimSpace(string(out))
+				}
+				t.Cleanup(func() {
+					_ = exec.Command(binary, "-S", socket, "kill-server").Run()
+					_ = os.RemoveAll(dir)
+				})
+				require.Equal(t, "$0", run("new-session", "-d", "-P", "-F", "#{session_id}", "-s", "bridge", "printf 'BRIDGE_OUTPUT\\n'; sleep 60"))
+				run("set-environment", "-t", "$0", model.SSHBridgeIdentityEnv, "ssh/host/work")
+				require.Eventually(t, func() bool {
+					return strings.Contains(run("capture-pane", "-p", "-t", "$0"), "BRIDGE_OUTPUT")
+				}, 2*time.Second, 10*time.Millisecond)
+				bridgeOutput := run("capture-pane", "-p", "-t", "$0")
+				bridgePane := run("display-message", "-p", "-t", "$0", "#{pane_id} #{pane_pid}")
+
+				operations := filepath.Join(dir, "operations")
+				focus := filepath.Join(dir, "focused")
+				wrapper := filepath.Join(dir, "tmux")
+				startupDone := filepath.Join(dir, "startup-done")
+				windowDone := filepath.Join(dir, "window-done")
+				keysSent := filepath.Join(dir, "rename-keys-sent")
+				server := shell.Quote(binary) + " -S " + shell.Quote(socket) + " -f /dev/null"
+				script := "#!/bin/sh\n" +
+					"op=$1; target=; previous=; for arg in \"$@\"; do [ \"$previous\" != -t ] || target=$arg; previous=$arg; done\n" +
+					"case \"$op\" in\n" +
+					"send-keys|new-window|next-window|attach-session) printf '%s %s\\n' \"$op\" \"$target\" >> " + shell.Quote(operations) + ";;\nesac\n" +
+					"if [ -f " + shell.Quote(keysSent) + " ] && { [ \"$op\" = list-sessions ] || [ \"$op\" = list-windows ] || [ \"$op\" = new-window ]; }; then i=0; while [ ! -f " + shell.Quote(startupDone) + " ] && [ \"$i\" -lt 300 ]; do sleep 0.01; i=$((i+1)); done; [ -f " + shell.Quote(startupDone) + " ] || exit 97; fi\n" +
+					"if [ \"$op\" = send-keys ]; then " + server + " \"$@\"; status=$?; if [ \"$status\" -eq 0 ]; then case \"$*\" in *rename-session*) touch " + shell.Quote(keysSent) + ";; esac; fi; exit \"$status\"; fi\n" +
+					"if [ \"$op\" = attach-session ]; then " + server + " display-message -p -t \"$target\" '#{session_id}' > " + shell.Quote(focus) + "; exit $?; fi\n" +
+					"exec " + server + " \"$@\"\n"
+				require.NoError(t, os.WriteFile(wrapper, []byte(script), 0700))
+				command := "touch " + shell.Quote(startupDone)
+				if mode == "rename" {
+					command = server + " rename-session -t " + shell.Quote("$1") + " renamed; " +
+						server + " new-session -d -s " + shell.Quote("$0") + " -c " + shell.Quote(dir) + " " +
+						shell.Quote("printf 'REPLACEMENT_OUTPUT\\n'; sleep 60") + "; touch " + shell.Quote(startupDone)
+				}
+				config := filepath.Join(dir, "sesh.toml")
+				contents := fmt.Sprintf("tmux_command = %q\n[[session]]\nname = %q\npath = %q\nstartup_command = %q\nwindows = ['extra']\n[[window]]\nname = 'extra'\nstartup_script = %q\n", wrapper, name, dir, command, "touch "+shell.Quote(windowDone))
+				require.NoError(t, os.WriteFile(config, []byte(contents), 0600))
+				deps, err := NewBaseDeps().BuildAll(config)
+				require.NoError(t, err)
+				z := zoxide.NewMockZoxide(t)
+				z.EXPECT().Add(dir).Return(nil).Once()
+				c := connector.NewConnector(deps.Config, nil, nil, deps.Lister, nil, deps.Startup, deps.Tmux, z, nil, nil)
+				if mode == "window" || mode == "rename" {
+					_, err = c.ConnectWindow(model.WindowConnectOpts{Session: name, Name: "notes", Path: dir})
+				} else {
+					opts := model.ConnectOpts{}
+					if mode == "command" {
+						opts.Command = command
+					}
+					message, connectErr := c.Connect(name, opts)
+					err = connectErr
+					require.Contains(t, message, name)
+				}
+				require.NoError(t, err)
+				if mode == "rename" {
+					require.Equal(t, "renamed", run("display-message", "-p", "-t", "$1", "#{session_name}"))
+					require.Equal(t, name, run("display-message", "-p", "-t", "$2", "#{session_name}"))
+				} else {
+					require.Equal(t, name, run("display-message", "-p", "-t", "$1", "#{session_name}"))
+				}
+				marker, err := deps.Tmux.GetSessionEnvironment("$1", model.SSHBridgeIdentityEnv)
+				require.NoError(t, err)
+				require.Empty(t, marker)
+				selected, err := os.ReadFile(focus)
+				require.NoError(t, err)
+				require.Equal(t, "$1\n", string(selected))
+				log, err := os.ReadFile(operations)
+				require.NoError(t, err)
+				require.Contains(t, string(log), "send-keys $1\n")
+				require.Contains(t, string(log), "attach-session $1\n")
+				for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
+					fields := strings.Fields(line)
+					require.Len(t, fields, 2)
+					require.Contains(t, []string{"$1", "$1:"}, fields[1], "operation must preserve the verified ID: %s", line)
+				}
+				require.Eventually(t, func() bool { _, err := os.Stat(startupDone); return err == nil }, 2*time.Second, 10*time.Millisecond)
+				if mode != "command" {
+					require.Contains(t, string(log), "new-window $1:\n")
+					require.Contains(t, string(log), "next-window $1:\n")
+					require.Eventually(t, func() bool { _, err := os.Stat(windowDone); return err == nil }, 2*time.Second, 10*time.Millisecond)
+				}
+				if mode == "rename" {
+					require.Equal(t, "1", run("display-message", "-p", "-t", "$2", "#{session_windows}"))
+					require.NotContains(t, run("list-windows", "-t", "$2", "-F", "#{window_name}"), "notes")
+					require.Contains(t, run("capture-pane", "-p", "-t", "$2"), "REPLACEMENT_OUTPUT")
+					require.Contains(t, run("list-windows", "-t", "$1", "-F", "#{window_name}"), "notes")
+				}
+				require.Equal(t, "bridge", run("display-message", "-p", "-t", "$0", "#{session_name}"))
+				require.Equal(t, bridgePane, run("display-message", "-p", "-t", "$0", "#{pane_id} #{pane_pid}"))
+				require.Equal(t, model.SSHBridgeIdentityEnv+"=ssh/host/work", run("show-environment", "-t", "$0", model.SSHBridgeIdentityEnv))
+				require.Equal(t, "1", run("display-message", "-p", "-t", "$0", "#{session_windows}"))
+				require.Equal(t, bridgeOutput, run("capture-pane", "-p", "-t", "$0"))
+			})
+		}
+	}
+}

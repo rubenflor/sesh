@@ -30,16 +30,18 @@ func connectToTmux(c *RealConnector, connection model.Connection, opts model.Con
 		if _, err := c.tmux.NewSession(connection.Session.Name, connection.Session.Path); err != nil {
 			return "", fmt.Errorf("failed to create tmux session %q: %w", connection.Session.Name, err)
 		}
-		if opts.Command != "" {
-			c.tmux.SendKeys(connection.Session.Name, opts.Command)
-		} else {
-			c.startup.Exec(connection.Session)
-		}
 	}
 
 	sessionID, err := tmux.LocalSessionID(c.tmux, connection.Session.Name)
 	if err != nil {
 		return "", err
+	}
+	if connection.New {
+		if opts.Command != "" {
+			c.tmux.SendKeys(sessionID, opts.Command)
+		} else {
+			c.startup.Exec(connection.Session, sessionID)
+		}
 	}
 	message, err := c.focusSession(sessionID, opts.Switch)
 	return strings.Replace(message, sessionID, connection.Session.Name, 1), err

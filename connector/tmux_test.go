@@ -76,7 +76,7 @@ func TestConnectToTmuxDetachedSwitchesClientAndFocuses(t *testing.T) {
 	mTmux.EXPECT().NewSession("nutiliti/2345", "/repo/w/2345").Return("", nil)
 	// No opts.Command => startup.Exec is called; startup is a no-op mock here
 	mStartup := startup.NewMockStartup(t)
-	mStartup.EXPECT().Exec(mock.Anything).Return("", nil).Maybe()
+	mStartup.EXPECT().Exec(mock.Anything, "$3").Return("", nil).Once()
 
 	// Detached: not attached, --switch set
 	mTmux.EXPECT().IsAttached().Return(false)
