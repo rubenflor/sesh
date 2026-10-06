@@ -60,6 +60,19 @@ func TestRunContextReturnsNonZeroExitInformation(t *testing.T) {
 	}
 }
 
+func TestRunContextStartFailureAndAlreadyCanceledContext(t *testing.T) {
+	result, err := NewExec().RunContext(context.Background(), filepath.Join(t.TempDir(), "missing-command"))
+	if err == nil || result.ExitCode != -1 || len(result.Stdout) != 0 || len(result.Stderr) != 0 {
+		t.Fatalf("start failure = %+v, %v", result, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err = NewExec().RunContext(ctx, os.Args[0], helperProcessArgs("output")...)
+	if !errors.Is(err, context.Canceled) || result.ExitCode != -1 || len(result.Stdout) != 0 || len(result.Stderr) != 0 {
+		t.Fatalf("already canceled command = %+v, %v", result, err)
+	}
+}
+
 func TestRunContextCancellationTerminatesAndWaitsForChild(t *testing.T) {
 	startedPath := filepath.Join(t.TempDir(), "started")
 	ctx, cancel := context.WithCancel(context.Background())

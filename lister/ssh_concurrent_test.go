@@ -238,6 +238,46 @@ func TestDiscoverSSHHostsParentCancellationStopsActiveProbes(t *testing.T) {
 	}
 }
 
+func TestListSSHParentCancellationStopsActiveAndQueuedProbes(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mixed=%t", mixed), func(t *testing.T) {
+			hosts := make([]string, 12)
+			for i := range hosts {
+				hosts[i] = fmt.Sprintf("host-%d", i)
+			}
+			runner := newControlledSSHExec(hosts)
+			runner.blockOnContext = true
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			l := NewLister(model.Config{SSH: model.SSHConfig{Hosts: hosts}}, nil, nil, nil, nil, nil, nil, runner)
+			done := make(chan error, 1)
+			go func() {
+				_, err := l.List(ListOptions{Context: ctx, SSH: true, Config: mixed})
+				done <- err
+			}()
+			for range maxConcurrentSSHProbes {
+				waitSSHEvent(t, runner.started)
+			}
+			cancel()
+			if err := waitSSHEvent(t, done); !errors.Is(err, context.Canceled) {
+				t.Fatalf("List cancellation = %v; must not become empty success or a suppressed mixed-source failure", err)
+			}
+			runner.mu.Lock()
+			active := runner.active
+			runner.mu.Unlock()
+			if active != 0 {
+				t.Fatalf("List returned with %d active probes", active)
+			}
+			if len(runner.started) != 0 {
+				t.Fatal("queued probes started after cancellation")
+			}
+			if len(runner.completed) != maxConcurrentSSHProbes {
+				t.Fatal("List returned before all active workers completed")
+			}
+		})
+	}
+}
+
 func TestDiscoverSSHHostsAppliesFiveSecondPerHostDeadline(t *testing.T) {
 	hosts := []string{"slow"}
 	runner := newControlledSSHExec(hosts)

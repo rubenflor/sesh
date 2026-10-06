@@ -6,9 +6,11 @@ import (
 	"io" // This is used to enable the multiwritter and be able to write to the log file and the console at the same time
 	"log/slog"
 	"os"
+	"os/signal"
 	"path"    // This is used to create the path where the log files will be stored
 	"strings" // This is required to compare the evironment variables
-	"time"    // This is used to get the current date and create the log file
+	"syscall"
+	"time" // This is used to get the current date and create the log file
 
 	"charm.land/fang/v2"
 	"github.com/joshmedeski/sesh/v2/seshcli"
@@ -17,8 +19,10 @@ import (
 var version = "dev"
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	cmd := seshcli.NewRootCommand(version)
-	if err := fang.Execute(context.TODO(), cmd, fang.WithColorSchemeFunc(fang.AnsiColorScheme), fang.WithoutVersion()); err != nil {
+	if err := fang.Execute(ctx, cmd, fang.WithColorSchemeFunc(fang.AnsiColorScheme), fang.WithoutVersion()); err != nil {
 		slog.Error("main file: ", "error", err)
 		os.Exit(1)
 	}

@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,6 +24,8 @@ const (
 )
 
 type PickerOptions struct {
+	// Context controls this invocation's TUI lifetime; nil keeps standalone behavior.
+	Context                 context.Context
 	ShowIcons               *bool
 	ShowWindows             *bool
 	SeparatorAware          *bool
@@ -278,7 +281,12 @@ func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (string, erro
 		Remove:                  removeFunc,
 		Kill:                    killFunc,
 	})
-	prog := tea.NewProgram(m)
+	var programOpts []tea.ProgramOption
+	if opts.Context != nil {
+		// The CLI context owns signals so the TUI cannot quit ahead of discovery.
+		programOpts = append(programOpts, tea.WithContext(opts.Context), tea.WithoutSignalHandler())
+	}
+	prog := tea.NewProgram(m, programOpts...)
 	result, err := prog.Run()
 	if err != nil {
 		return "", fmt.Errorf("picker error: %w", err)

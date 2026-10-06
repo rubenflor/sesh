@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"time"
 )
 
 // CommandResult contains the output and exit status from a completed command.
@@ -43,8 +44,11 @@ func (e *OsExec) Command(name string, args ...string) ExecCmd {
 // RunContext executes name with args using ctx, capturing stdout and stderr
 // separately. The returned error is non-nil for start failures and non-zero
 // process exits; ExitCode is -1 when no normal exit code is available.
+// After cancellation or direct-child exit, inherited output pipes have at most
+// 250 ms to drain. Wait still reaps the direct child before returning.
 func (e *OsExec) RunContext(ctx context.Context, name string, args ...string) (CommandResult, error) {
 	command := exec.CommandContext(ctx, name, args...)
+	command.WaitDelay = 250 * time.Millisecond
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr

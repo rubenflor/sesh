@@ -1,6 +1,8 @@
 package seshcli
 
 import (
+	"sync"
+
 	"github.com/spf13/cobra"
 
 	"github.com/joshmedeski/sesh/v2/lister"
@@ -44,11 +46,17 @@ func newPickerCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*De
 				SSH:            ssh,
 				HideDuplicates: hideDuplicates,
 			}
+			var fetchMu sync.Mutex
 			fetchFunc := func() (model.SeshSessions, error) {
+				fetchMu.Lock()
+				defer fetchMu.Unlock()
+				if err := cmd.Context().Err(); err != nil {
+					return model.SeshSessions{}, err
+				}
 				return deps.Lister.List(listerOpts)
 			}
 
-			var pickerOpts picker.PickerOptions
+			pickerOpts := picker.PickerOptions{Context: cmd.Context()}
 			if cmd.Flags().Changed("icons") {
 				showIcons := true
 				pickerOpts.ShowIcons = &showIcons
@@ -92,6 +100,13 @@ func newPickerCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*De
 			}
 
 			chosen, err := deps.Picker.Pick(fetchFunc, pickerOpts)
+			if contextErr := cmd.Context().Err(); contextErr != nil {
+				// Bubble Tea can return while a fetch command is still running.
+				// Wait for discovery to terminate/reap its probes before CLI exit.
+				fetchMu.Lock()
+				fetchMu.Unlock()
+				return contextErr
+			}
 			if err != nil {
 				return err
 			}
