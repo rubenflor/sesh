@@ -18,6 +18,7 @@ func listpanesformat() string {
 		"#{pane_current_path}",
 		"#{pane_id}",
 		"#{session_id}",
+		"#{window_id}",
 	}
 	return strings.Join(variables, separator)
 }
@@ -50,7 +51,7 @@ func parseTmuxPanesOutput(rawList []string) ([]*model.TmuxPane, error) {
 	panes := make([]*model.TmuxPane, 0, len(rawList))
 	for _, line := range rawList {
 		fields := strings.Split(line, separator)
-		if len(fields) != 8 {
+		if len(fields) != 9 {
 			continue
 		}
 		panes = append(panes, &model.TmuxPane{
@@ -62,25 +63,26 @@ func parseTmuxPanesOutput(rawList []string) ([]*model.TmuxPane, error) {
 			PanePath:    fields[5],
 			PaneID:      fields[6],
 			SessionID:   fields[7],
+			WindowID:    fields[8],
 		})
 	}
 	return panes, nil
 }
 
-func (t *RealTmux) SelectPane(windowIndex int, paneIndex int) (string, error) {
-	sessionName, err := t.GetCurrentSession()
-	if err != nil {
-		return "", fmt.Errorf("failed to get current session: %w", err)
+func (t *RealTmux) SelectPane(pane *model.TmuxPane) (string, error) {
+	if pane.SessionID == "" || pane.WindowID == "" || pane.PaneID == "" {
+		return "", fmt.Errorf("pane has no server-assigned session, window or pane ID")
 	}
 
-	target := fmt.Sprintf("%s:%d.%d", sessionName, windowIndex, paneIndex)
-	if _, err := t.shell.Cmd("tmux", "select-window", "-t", fmt.Sprintf("%s:%d", sessionName, windowIndex)); err != nil {
-		return "", fmt.Errorf("failed to select window %d: %w", windowIndex, err)
+	// Keep the verified owning session when selecting its window; display names
+	// and numeric indexes are not operation targets.
+	if _, err := t.shell.Cmd(t.bin, "select-window", "-t", pane.SessionID+":"+pane.WindowID); err != nil {
+		return "", fmt.Errorf("failed to select window %d: %w", pane.WindowIndex, err)
 	}
-	if _, err := t.shell.Cmd("tmux", "select-pane", "-t", target); err != nil {
-		return "", fmt.Errorf("failed to select pane %d in window %d: %w", paneIndex, windowIndex, err)
+	if _, err := t.shell.Cmd(t.bin, "select-pane", "-t", pane.PaneID); err != nil {
+		return "", fmt.Errorf("failed to select pane %d in window %d: %w", pane.PaneIndex, pane.WindowIndex, err)
 	}
-	return fmt.Sprintf("selected pane %d in window %d", paneIndex, windowIndex), nil
+	return fmt.Sprintf("selected pane %d in window %d", pane.PaneIndex, pane.WindowIndex), nil
 }
 
 func (t *RealTmux) GetCurrentSession() (string, error) {

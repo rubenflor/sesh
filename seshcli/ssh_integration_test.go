@@ -165,8 +165,8 @@ func TestSSHIntegrationBridgeMetadataNoLeak(t *testing.T) {
 	deps, s, runner, configPath := sshIntegrationDeps(t, false)
 	build := func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil }
 	s.On("ListCmd", "tmux", "list-panes", "-s", "-F", mock.Anything).Return([]string{
-		"0::remote::0::::ssh::/bridge::%1::$1",
-		"0::user::0::::zsh::/user::%2::$2",
+		"0::remote::0::::ssh::/bridge::%1::$1::@1",
+		"0::user::0::::zsh::/user::%2::$2::@2",
 	}, nil).Once()
 	for _, tt := range []struct {
 		name string

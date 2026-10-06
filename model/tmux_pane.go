@@ -9,5 +9,6 @@ type TmuxPane struct {
 	PanePath          string
 	PaneID            string
 	SessionID         string
+	WindowID          string
 	SSHBridgeIdentity string
 }

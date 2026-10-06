@@ -61,7 +61,7 @@ func connectToTmuxPane(c *RealConnector, connection model.Connection, _ model.Co
 		}
 		paneKey := fmt.Sprintf("tmux-pane:%s/%s", pane.WindowName, pane.PaneID)
 		if paneKey == targetPaneKey {
-			return c.tmux.SelectPane(pane.WindowIndex, pane.PaneIndex)
+			return c.tmux.SelectPane(pane)
 		}
 	}
 

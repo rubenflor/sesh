@@ -32,7 +32,7 @@ type Tmux interface {
 	SelectWindow(targetWindow string) (string, error)
 	SwitchOrAttach(name string, opts model.ConnectOpts) (string, error)
 	ListTmuxPanes() ([]*model.TmuxPane, error)
-	SelectPane(windowIndex int, paneIndex int) (string, error)
+	SelectPane(pane *model.TmuxPane) (string, error)
 	GetCurrentSession() (string, error)
 	ListClients() ([]model.TmuxClient, error)
 	ResolveClient() string
