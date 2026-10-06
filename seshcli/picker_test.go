@@ -20,7 +20,7 @@ func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	deps := sshJSONTestDeps(t, []string{"first"}, map[string]execwrap.CommandResult{
-		"first": {Stdout: []byte("nutiliti/2345% café\n")},
+		"first": {Stdout: []byte("sesh-ssh-inventory-v1\nnutiliti/2345% café\n")},
 	})
 	const identity = "ssh/first/nutiliti%2F2345%25%20caf%C3%A9"
 	mockPicker := picker.NewMockPicker(t)

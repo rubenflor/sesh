@@ -102,7 +102,7 @@ func TestDiscoverSSHHostsBoundsConcurrencyAndPreservesConfiguredOrder(t *testing
 		hosts[i] = fmt.Sprintf("host-%02d", i)
 		runner.release[hosts[i]] = make(chan struct{})
 		runner.responses[hosts[i]] = execResponse{
-			result: execwrap.CommandResult{Stdout: []byte("main\n"), ExitCode: 0},
+			result: execwrap.CommandResult{Stdout: []byte("sesh-ssh-inventory-v1\nmain\n"), ExitCode: 0},
 		}
 	}
 
@@ -156,7 +156,7 @@ func TestDiscoverSSHHostsKeepsConfiguredOrderWhenProbesCompleteOutOfOrder(t *tes
 	for _, host := range hosts {
 		runner.release[host] = make(chan struct{})
 		runner.responses[host] = execResponse{
-			result: execwrap.CommandResult{Stdout: []byte("main\n"), ExitCode: 0},
+			result: execwrap.CommandResult{Stdout: []byte("sesh-ssh-inventory-v1\nmain\n"), ExitCode: 0},
 		}
 	}
 

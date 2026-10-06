@@ -77,7 +77,7 @@ func TestJSONNamePassedUnchangedToConnectSwitch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	deps := sshJSONTestDeps(t, []string{"first"}, map[string]execwrap.CommandResult{
-		"first": {Stdout: []byte("nutiliti/2345% café\n")},
+		"first": {Stdout: []byte("sesh-ssh-inventory-v1\nnutiliti/2345% café\n")},
 	})
 	list := newListCommand(&deps.BaseDeps, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
 	var stdout bytes.Buffer

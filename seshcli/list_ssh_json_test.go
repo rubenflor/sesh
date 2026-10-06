@@ -41,7 +41,7 @@ func sshJSONCases() []sshJSONCase {
 	sshArgs := []string{"--json", "--hide-duplicates", "--ssh"}
 	hosts := []string{"first", "second"}
 	partial := map[string]execwrap.CommandResult{
-		"first":  {Stdout: []byte("0\n"), Stderr: []byte("SSH warning on a successful probe\n")},
+		"first":  {Stdout: []byte("sesh-ssh-inventory-v1\n0\n"), Stderr: []byte("SSH warning on a successful probe\n")},
 		"second": {ExitCode: 255, Stderr: []byte("connection refused\n")},
 	}
 	failed := map[string]execwrap.CommandResult{
@@ -52,7 +52,7 @@ func sshJSONCases() []sshJSONCase {
 		{"absent SSH config", nil, jsonArgs, nil, []string{"local"}, 0},
 		{"empty SSH config", []string{}, jsonArgs, nil, []string{"local"}, 0},
 		{"duplicate remote display names", hosts, jsonArgs, map[string]execwrap.CommandResult{
-			"first": {Stdout: []byte("0\n")}, "second": {Stdout: []byte("0\n")},
+			"first": {Stdout: []byte("sesh-ssh-inventory-v1\n0\n")}, "second": {Stdout: []byte("sesh-ssh-inventory-v1\n0\n")},
 		}, []string{"local", "ssh/first/0", "ssh/second/0"}, 0},
 		{"default partial failures", hosts, jsonArgs, partial, []string{"local", "ssh/first/0"}, 0},
 		{"mixed partial failures", hosts, mixedArgs, partial, []string{"local", "ssh/first/0"}, 0},
@@ -62,20 +62,29 @@ func sshJSONCases() []sshJSONCase {
 		{"mixed all hosts fail", hosts, mixedArgs, failed, []string{"local"}, 0},
 		{"SSH-only partial failures", hosts, sshArgs, partial, []string{"ssh/first/0"}, 0},
 		{"SSH-only all hosts fail", hosts, sshArgs, failed, nil, 1},
+		{"SSH-only tmux status one is failure", hosts, sshArgs, map[string]execwrap.CommandResult{
+			"first": {ExitCode: 1}, "second": {ExitCode: 1},
+		}, nil, 1},
+		{"SSH-only startup without inventory is failure", hosts, sshArgs, map[string]execwrap.CommandResult{
+			"first": {}, "second": {},
+		}, nil, 1},
 		{"SSH-only successful empty host", hosts, sshArgs, map[string]execwrap.CommandResult{
-			"first": {ExitCode: 255}, "second": {Stderr: []byte("aucun serveur tmux\n")},
+			"first": {ExitCode: 255}, "second": {Stdout: []byte("sesh-ssh-inventory-v1\n"), Stderr: []byte("aucun serveur tmux\n")},
 		}, []string{}, 0},
 		{"SSH-only all hosts empty", hosts, sshArgs, map[string]execwrap.CommandResult{
-			"first": {}, "second": {},
+			"first": {Stdout: []byte("sesh-ssh-inventory-v1\n")}, "second": {Stdout: []byte("sesh-ssh-inventory-v1\n")},
 		}, []string{}, 0},
 		{"SSH-only malformed stdout", hosts, sshArgs, map[string]execwrap.CommandResult{
-			"first": {Stdout: []byte("0\n\n")}, "second": {ExitCode: 255},
+			"first": {Stdout: []byte("sesh-ssh-inventory-v1\n0\n\n")}, "second": {ExitCode: 255},
 		}, nil, 1},
 		{"SSH-only without config", nil, sshArgs, nil, []string{}, 0},
 		{"SSH-only empty hosts", []string{}, sshArgs, nil, []string{}, 0},
 		{"encoded identity", []string{"first"}, sshArgs, map[string]execwrap.CommandResult{
-			"first": {Stdout: []byte("nutiliti/2345% café\n")},
+			"first": {Stdout: []byte("sesh-ssh-inventory-v1\nnutiliti/2345% café\n")},
 		}, []string{"ssh/first/nutiliti%2F2345%25%20caf%C3%A9"}, 0},
+		{"lossless escaped identities", []string{"first"}, sshArgs, map[string]execwrap.CommandResult{
+			"first": {Stdout: []byte("sesh-ssh-inventory-v1\nline\\nbreak\nline\\\\nbreak\nslash\\\\\n")},
+		}, []string{"ssh/first/line%0Abreak", "ssh/first/line%5Cnbreak", "ssh/first/slash%5C"}, 0},
 	}
 }
 

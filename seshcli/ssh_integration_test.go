@@ -43,8 +43,8 @@ func sshIntegrationDeps(t *testing.T, caching bool) (*Deps, *shell.MockShell, *e
 	require.NoError(t, os.WriteFile(configPath, []byte(config), 0600))
 	runner := execwrap.NewMockExec(t)
 	for host, result := range map[string]execwrap.CommandResult{
-		"first":  {Stdout: []byte("nutiliti/2345% café\n"), Stderr: []byte("successful probe warning\n")},
-		"empty":  {},
+		"first":  {Stdout: []byte("sesh-ssh-inventory-v1\nnutiliti/2345% café\n"), Stderr: []byte("successful probe warning\n")},
+		"empty":  {Stdout: []byte("sesh-ssh-inventory-v1\n")},
 		"failed": {ExitCode: 255, Stderr: []byte("connection refused\n")},
 	} {
 		var err error

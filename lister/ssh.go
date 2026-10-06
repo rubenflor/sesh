@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,9 +13,12 @@ import (
 	"github.com/joshmedeski/sesh/v2/model"
 )
 
-// tmux returns status 1 when it has no server or sessions. The remote shell
-// turns only that status into success; other tmux failures remain failures.
-const sshDiscoveryCommand = `sh -c 'tmux list-sessions -F "#{session_name}" || test "$?" -eq 1'`
+// Starting a configuration-free server makes an absent server a successful empty
+// inventory without creating sessions. Existing servers retain their settings.
+// Never normalize failure statuses: socket errors also return status 1. The
+// header proves the command reached the server even if startup exits with 0.
+const sshInventoryHeader = "sesh-ssh-inventory-v1\n"
+const sshDiscoveryCommand = `tmux -u -f /dev/null start-server \; display-message -p sesh-ssh-inventory-v1 \; list-sessions -F '#{session_name}'`
 
 const (
 	maxConcurrentSSHProbes = 8
@@ -158,15 +162,60 @@ func aggregateSSHHostResults(results []sshHostResult, failWhenAllHostsFail bool)
 }
 
 func parseTmuxSessionNames(output []byte) ([]string, error) {
-	if len(output) == 0 {
+	inventory, ok := strings.CutPrefix(string(output), sshInventoryHeader)
+	if !ok || (inventory != "" && !strings.HasSuffix(inventory, "\n")) {
+		return nil, fmt.Errorf("missing inventory header or incomplete record")
+	}
+	if inventory == "" {
 		return nil, nil
 	}
 
-	lines := strings.Split(strings.TrimSuffix(string(output), "\n"), "\n")
-	for _, name := range lines {
+	lines := strings.Split(strings.TrimSuffix(inventory, "\n"), "\n")
+	for i, line := range lines {
+		name, err := decodeTmuxSessionName(line)
+		if err != nil {
+			return nil, err
+		}
 		if name == "" || strings.ContainsRune(name, '\x00') {
 			return nil, fmt.Errorf("empty or invalid session name in inventory")
 		}
+		lines[i] = name
 	}
 	return lines, nil
+}
+
+// tmux sanitizes session names with vis(VIS_OCTAL|VIS_CSTYLE|VIS_TAB|VIS_NL).
+// Decode once, so a literal backslash-n remains distinct from a newline.
+func decodeTmuxSessionName(line string) (string, error) {
+	var name strings.Builder
+	for i := 0; i < len(line); i++ {
+		b := line[i]
+		if b != '\\' {
+			if b < 0x20 || b == 0x7f {
+				return "", fmt.Errorf("unescaped control character in inventory")
+			}
+			name.WriteByte(b)
+			continue
+		}
+		i++
+		if i == len(line) {
+			return "", fmt.Errorf("incomplete tmux escape in inventory")
+		}
+		b = line[i]
+		const escapes = "abtnvfrs\\"
+		const decoded = "\a\b\t\n\v\f\r \\"
+		if index := strings.IndexByte(escapes, b); index >= 0 {
+			name.WriteByte(decoded[index])
+		} else if b >= '0' && b <= '7' && i+2 < len(line) {
+			value, err := strconv.ParseUint(line[i:i+3], 8, 8)
+			if err != nil {
+				return "", fmt.Errorf("invalid octal tmux escape in inventory: %w", err)
+			}
+			name.WriteByte(byte(value))
+			i += 2
+		} else {
+			return "", fmt.Errorf("invalid tmux escape in inventory")
+		}
+	}
+	return name.String(), nil
 }

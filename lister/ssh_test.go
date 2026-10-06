@@ -29,7 +29,7 @@ func (e *probeExec) RunContext(_ context.Context, name string, args ...string) (
 
 func TestProbeSSHHostBuildsCanonicalSessionsAndSafeDiscoveryArgs(t *testing.T) {
 	runner := &probeExec{result: execwrap.CommandResult{
-		Stdout:   []byte("0\nnutiliti/2345\n"),
+		Stdout:   []byte("sesh-ssh-inventory-v1\n0\nnutiliti/2345\n"),
 		ExitCode: 0,
 	}}
 
@@ -57,7 +57,7 @@ func TestProbeSSHHostBuildsCanonicalSessionsAndSafeDiscoveryArgs(t *testing.T) {
 
 func TestProbeSSHHostAcceptsSuccessfulStderrWarning(t *testing.T) {
 	runner := &probeExec{result: execwrap.CommandResult{
-		Stdout:   []byte("main\n"),
+		Stdout:   []byte("sesh-ssh-inventory-v1\nmain\n"),
 		Stderr:   []byte("warning from remote shell\n"),
 		ExitCode: 0,
 	}}
@@ -71,8 +71,9 @@ func TestProbeSSHHostAcceptsSuccessfulStderrWarning(t *testing.T) {
 	}
 }
 
-func TestProbeSSHHostAcceptsNormalizedNoTmuxServer(t *testing.T) {
+func TestProbeSSHHostAcceptsSuccessfulEmptyInventory(t *testing.T) {
 	runner := &probeExec{result: execwrap.CommandResult{
+		Stdout:   []byte(sshInventoryHeader),
 		Stderr:   []byte("localized diagnostic from tmux"),
 		ExitCode: 0,
 	}}
@@ -85,7 +86,7 @@ func TestProbeSSHHostAcceptsNormalizedNoTmuxServer(t *testing.T) {
 		t.Fatalf("sessions = %#v, want empty inventory", sessions)
 	}
 	if runner.args[6] != sshDiscoveryCommand {
-		t.Fatalf("remote command = %q, want status-based empty-inventory contract", runner.args[6])
+		t.Fatalf("remote command = %q, want framed empty-inventory contract", runner.args[6])
 	}
 }
 
@@ -101,11 +102,34 @@ func TestProbeSSHHostRejectsGenuineSSHFailure(t *testing.T) {
 
 func TestProbeSSHHostRejectsMalformedTmuxOutput(t *testing.T) {
 	runner := &probeExec{result: execwrap.CommandResult{
-		Stdout:   []byte("main\n\n"),
+		Stdout:   []byte("sesh-ssh-inventory-v1\nmain\n\n"),
 		ExitCode: 0,
 	}}
 
 	if _, err := probeSSHHost(context.Background(), runner, "server"); err == nil {
 		t.Fatal("probeSSHHost() error = nil, want malformed output error")
+	}
+}
+
+func TestParseTmuxSessionNames(t *testing.T) {
+	output := sshInventoryHeader + "line\\nbreak\nliteral\\\\n\nslash\\\\\n\\001\\033\\177\ncafé/100% 'quotes' $();\n"
+	names, err := parseTmuxSessionNames([]byte(output))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"line\nbreak", `literal\n`, `slash\`, "\x01\x1b\x7f", "café/100% 'quotes' $();"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("names = %#v, want %#v", names, want)
+	}
+	for _, inventory := range []string{
+		"", "main\n", sshInventoryHeader + "main", sshInventoryHeader + "\n",
+		sshInventoryHeader + "bad\\\n", sshInventoryHeader + "bad\\q\n",
+		sshInventoryHeader + "bad\\12\n", sshInventoryHeader + "bad\\400\n",
+		sshInventoryHeader + "bad\\078\n", sshInventoryHeader + "bad\\000\n",
+		sshInventoryHeader + "bad\x00\n", sshInventoryHeader + "bad\t\n",
+	} {
+		if _, err := parseTmuxSessionNames([]byte(inventory)); err == nil {
+			t.Errorf("accepted malformed inventory %q", inventory)
+		}
 	}
 }

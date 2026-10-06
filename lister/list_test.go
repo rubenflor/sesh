@@ -16,7 +16,7 @@ import (
 )
 
 func TestListSSHConfiguredDefault(t *testing.T) {
-	runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte("0\nnutiliti/2345\n")}}
+	runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte(sshInventoryHeader + "0\nnutiliti/2345\n")}}
 	config := model.Config{SSH: model.SSHConfig{Hosts: []string{"myinventa"}}}
 	l := newSSHListTestLister(t, config, runner)
 
@@ -59,7 +59,7 @@ func TestListSSHSourceFilters(t *testing.T) {
 		{"SSH and tmux", ListOptions{SSH: true, Tmux: true}, []string{"tmux:local", "ssh:ssh/server/0"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte("0\n")}}
+			runner := &probeExec{result: execwrap.CommandResult{Stdout: []byte(sshInventoryHeader + "0\n")}}
 			l := newSSHListTestLister(t, model.Config{SSH: model.SSHConfig{Hosts: []string{"server"}}}, runner)
 
 			sessions, err := l.List(tt.opts)
@@ -93,8 +93,8 @@ func TestListSSHConfiguredOrderAndSortOrder(t *testing.T) {
 			hosts := []string{"first", "second"}
 			runner := newControlledSSHExec(hosts)
 			runner.release["first"] = make(chan struct{})
-			runner.responses["first"] = execResponse{result: execwrap.CommandResult{Stdout: []byte("z\na\n")}}
-			runner.responses["second"] = execResponse{result: execwrap.CommandResult{Stdout: []byte("0\n")}}
+			runner.responses["first"] = execResponse{result: execwrap.CommandResult{Stdout: []byte(sshInventoryHeader + "z\na\n")}}
+			runner.responses["second"] = execResponse{result: execwrap.CommandResult{Stdout: []byte(sshInventoryHeader + "0\n")}}
 			l := newSSHListTestLister(t, model.Config{SSH: model.SSHConfig{Hosts: hosts}, SortOrder: tt.config}, runner)
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
@@ -133,13 +133,13 @@ func TestListSSHFailureAggregation(t *testing.T) {
 			"first": {err: errors.New("offline")}, "second": {err: errors.New("offline")},
 		}, []string{"tmux:local", "tmuxinator:project", "zoxide:frequent"}, false},
 		{"mixed partial failure", ListOptions{Tmux: true, SSH: true}, map[string]execResponse{
-			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{Stdout: []byte("0\n")}},
+			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{Stdout: []byte(sshInventoryHeader + "0\n")}},
 		}, []string{"tmux:local", "ssh:ssh/second/0"}, false},
 		{"SSH partial failure", ListOptions{SSH: true}, map[string]execResponse{
-			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{Stdout: []byte("0\n")}},
+			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{Stdout: []byte(sshInventoryHeader + "0\n")}},
 		}, []string{"ssh:ssh/second/0"}, false},
 		{"SSH successful empty host", ListOptions{SSH: true}, map[string]execResponse{
-			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{}},
+			"first": {err: errors.New("offline")}, "second": {result: execwrap.CommandResult{Stdout: []byte(sshInventoryHeader)}},
 		}, []string{}, false},
 		{"SSH all failed", ListOptions{SSH: true}, map[string]execResponse{
 			"first": {err: errors.New("offline")}, "second": {err: errors.New("offline")},

@@ -81,12 +81,14 @@ printf '%s\0' "$@" > "$TMUX_CAPTURE"
 		{"backticks", "`touch \"$SSH_INJECTED\"`", "`touch \"$TMUX_INJECTED\"`", "=`touch \"$TMUX_INJECTED\"`"},
 		{"semicolons", `host; touch "$SSH_INJECTED"; #`, `work; touch "$TMUX_INJECTED"; #`, `=work; touch "$TMUX_INJECTED"; #`},
 		{"quote breakout", `host'; touch "$SSH_INJECTED"; #`, `work'; touch "$TMUX_INJECTED"; #`, `=work'; touch "$TMUX_INJECTED"; #`},
-		{"newlines", "host\ntouch \"$SSH_INJECTED\"", "work\ntouch \"$TMUX_INJECTED\"", "=work\ntouch \"$TMUX_INJECTED\""},
+		{"newlines", "host\ntouch \"$SSH_INJECTED\"", "work\ntouch \"$TMUX_INJECTED\"", "=work\\ntouch \"$TMUX_INJECTED\""},
+		{"literal newline escape", "host", `work\n`, `=work\\n`},
+		{"literal backslash", "host", `work\`, `=work\\`},
 		{"glob name", "host", "work*[ab]?", "=work*[ab]?"},
 		{"session ID shaped name", "host", "$1", "=$1"},
 		{"trailing semicolon", "host", "work;", `=work\;`},
 		{"repeated trailing semicolons", "host", "work;;", `=work;\;`},
-		{"backslash before semicolon", "host", `work\;`, `=work\\;`},
+		{"backslash before semicolon", "host", `work\;`, `=work\\\;`},
 		{"only semicolon", "host", ";", `=\;`},
 	}
 	for _, tt := range tests {
