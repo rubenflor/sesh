@@ -80,9 +80,20 @@ func (t *RealTmux) ListClients() ([]model.TmuxClient, error) {
 // Returns "" when no client can be determined; callers then let tmux guess,
 // which is no worse than not resolving at all.
 func (t *RealTmux) ResolveClient() string {
+	client, _, err := t.resolveClient()
+	if err != nil {
+		slog.Error("tmux: could not list clients", "error", err, "tmuxCommand", t.bin)
+	}
+	return client
+}
+
+// resolveClient distinguishes intentional calling-pane resolution from an
+// unavailable client. ResolveClient retains its switch/attach fallback contract;
+// focused path consumers use this result to fail closed instead.
+func (t *RealTmux) resolveClient() (client string, callingPane bool, err error) {
 	if client := t.os.Getenv(seshClientEnv); client != "" {
 		slog.Debug("tmux: client named by env", "client", client, "env", seshClientEnv)
-		return client
+		return client, false, nil
 	}
 	tmuxEnv := t.os.Getenv("TMUX")
 	// A pane inside tmux carries $TMUX_PANE, so tmux can resolve the calling
@@ -96,59 +107,84 @@ func (t *RealTmux) ResolveClient() string {
 	// caller to resolve from outside a session anyway.
 	if pane := t.os.Getenv(tmuxPaneEnv); pane != "" && tmuxEnv != "" {
 		slog.Debug("tmux: leaving client resolution to tmux", "pane", pane)
-		return ""
+		return "", true, nil
 	}
 	clients, err := t.ListClients()
 	if err != nil {
-		// Almost always the tmux binary being unreachable — a GUI launcher
-		// hands sesh a bare PATH that Homebrew isn't on. Nothing downstream can
-		// work, and every caller degrades to doing nothing visible, so this
-		// cannot be a debug line.
-		slog.Error("tmux: could not list clients", "error", err, "tmuxCommand", t.bin)
-		return ""
+		return "", false, fmt.Errorf("couldn't list tmux clients: %w", err)
 	}
 	if len(clients) == 0 {
 		slog.Debug("tmux: no clients attached")
-		return ""
+		return "", false, nil
 	}
 	sessionID := currentSessionID(tmuxEnv)
 	if sessionID != "" {
 		if client := mostRecent(clients, sessionID); client != "" {
 			slog.Debug("tmux: resolved client from calling session", "client", client, "session", sessionID)
-			return client
+			return client, false, nil
 		}
 	}
-	client := mostRecent(clients, "")
+	client = mostRecent(clients, "")
 	slog.Debug("tmux: resolved most recently active client", "client", client, "callingSession", sessionID, "clients", clients)
-	return client
+	return client, false, nil
 }
 
 // FocusedSessionPath returns the path of the session the user is looking at:
 // the calling pane's session inside tmux, or the resolved client's session
 // from outside it.
 func (t *RealTmux) FocusedSessionPath() (string, error) {
-	args := []string{"display-message", "-p"}
-	if session := t.resolvedClientSession(); session != "" {
-		args = append(args, "-t", session)
+	session, err := t.resolvedClientSession()
+	if err != nil {
+		return "", err
 	}
-	return t.shell.Cmd(t.bin, append(args, "#{session_path}")...)
+	args := []string{"display-message", "-p"}
+	if session != "" {
+		args = append(args, "-t", session+":")
+	}
+	id, err := t.shell.Cmd(t.bin, append(args, "#{session_id}")...)
+	if err != nil {
+		return "", err
+	}
+	number, ok := strings.CutPrefix(id, "$")
+	if _, err := strconv.ParseUint(number, 10, 64); !ok || err != nil {
+		return "", fmt.Errorf("focused tmux session has no valid server-assigned ID")
+	}
+	marker, err := t.GetSessionEnvironment(id, model.SSHBridgeIdentityEnv)
+	if err != nil {
+		return "", fmt.Errorf("couldn't check focused tmux session ownership: %w", err)
+	}
+	if marker != "" {
+		return "", fmt.Errorf("focused tmux session is an SSH bridge; focus a local session to use local paths")
+	}
+	return t.shell.Cmd(t.bin, "display-message", "-p", "-t", id+":", "#{session_path}")
 }
 
-func (t *RealTmux) resolvedClientSession() string {
-	client := t.ResolveClient()
+// An empty session with no error means tmux should resolve the calling pane.
+// Every unsuccessful selected-client lookup returns an error, never a fallback.
+func (t *RealTmux) resolvedClientSession() (string, error) {
+	client, callingPane, err := t.resolveClient()
+	if err != nil {
+		return "", err
+	}
+	if callingPane {
+		return "", nil
+	}
 	if client == "" {
-		return ""
+		return "", fmt.Errorf("no focused tmux client; attach a local client to use local paths")
 	}
 	clients, err := t.ListClients()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("couldn't read focused tmux client %q: %w", client, err)
 	}
 	for _, c := range clients {
 		if c.Name == client {
-			return c.SessionID
+			if c.SessionID == "" {
+				return "", fmt.Errorf("focused tmux client %q has no session", client)
+			}
+			return c.SessionID, nil
 		}
 	}
-	return ""
+	return "", fmt.Errorf("focused tmux client %q is unavailable; select an attached local client", client)
 }
 
 // switchClient moves the resolved client, falling back to letting tmux pick

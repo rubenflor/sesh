@@ -20,11 +20,11 @@ func NewWorktreeCommand(base *BaseDeps) *cobra.Command {
 	cmd.AddCommand(newWorktreeConnectCommand(base))
 	cmd.AddCommand(newWorktreeListCommand(base))
 	cmd.AddCommand(newWorktreePickerCommand(base))
-	cmd.AddCommand(newWorktreeBrowseCommand(base))
+	cmd.AddCommand(newWorktreeBrowseCommand(base, buildDeps))
 	return cmd
 }
 
-func newWorktreeBrowseCommand(base *BaseDeps) *cobra.Command {
+func newWorktreeBrowseCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*Deps, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "browse",
 		Aliases: []string{"b"},
@@ -37,7 +37,7 @@ request for the worktree's branch instead. The URL opens in [browser].applicatio
 when set, otherwise in the system default browser.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			deps, err := buildDeps(cmd, base)
+			deps, err := build(cmd, base)
 			if err != nil {
 				return err
 			}
@@ -54,7 +54,7 @@ when set, otherwise in the system default browser.`,
 				return err
 			}
 			if printOnly {
-				fmt.Println(url)
+				fmt.Fprintln(cmd.OutOrStdout(), url)
 				return nil
 			}
 			return deps.Browser.Open(url)
