@@ -82,8 +82,8 @@ func TestPickerInputHidesMarkedSSHBridges(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, []string{"tmux:local", "tmux:sesh-ssh-user"}, sessions.OrderedIndex)
 				assert.Equal(t, model.SeshSessionMap{
-					"tmux:local":         {Src: "tmux", Name: "local", Path: "/local"},
-					"tmux:sesh-ssh-user": {Src: "tmux", Name: "sesh-ssh-user", Path: "/user"},
+					"tmux:local":         {Src: "tmux", Name: "local", Path: "/local", TmuxSessionID: "$1", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
+					"tmux:sesh-ssh-user": {Src: "tmux", Name: "sesh-ssh-user", Path: "/user", TmuxSessionID: "$3", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 				}, sessions.Directory)
 			}).Return("", nil).Once()
 			deps.Picker = mockPicker
@@ -99,9 +99,9 @@ func bridgeDiscoveryTestDeps(t *testing.T) *Deps {
 	t.Helper()
 	mockTmux := tmux.NewMockTmux(t)
 	mockTmux.On("ListSessions").Return([]*model.TmuxSession{
-		{ID: "$1", Name: "local", Path: "/local"},
+		{ID: "$1", ServerGeneration: "101:1700000000:/tmp/tmux-fixture", Name: "local", Path: "/local"},
 		{ID: "$2", Name: "renamed-bridge", Path: "/bridge", SSHBridgeIdentity: "ssh/host/work"},
-		{ID: "$3", Name: "sesh-ssh-user", Path: "/user"},
+		{ID: "$3", ServerGeneration: "101:1700000000:/tmp/tmux-fixture", Name: "sesh-ssh-user", Path: "/user"},
 	}, nil).Maybe()
 	mockTmux.On("ListTmuxPanes").Return([]*model.TmuxPane{
 		{SessionID: "$1", WindowName: "editor", PaneCommand: "zsh", PanePath: "/local", PaneID: "%1"},

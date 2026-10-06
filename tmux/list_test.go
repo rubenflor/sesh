@@ -17,10 +17,10 @@ func TestListSessionsIncludesBridgeMetadata(t *testing.T) {
 	s := shell.NewMockShell(t)
 	tm := &RealTmux{shell: s, bin: "tmux"}
 	s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.MatchedBy(func(format string) bool {
-		return !strings.Contains(format, "#{SESH_SSH_IDENTITY}")
+		return !strings.Contains(format, "#{SESH_SSH_IDENTITY}") && strings.HasSuffix(format, serverGenerationFormat)
 	})).Return([]string{
-		"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::renamed-bridge::/tmp::2,1::2",
-		"1714092246::::0::::1714089765::1::::::::::::::0::$2::1714092245::0::0::sesh-ssh-user::/tmp::2,1::2",
+		"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::renamed-bridge::/tmp::2,1::2::101:1700000000:/tmp/tmux::fixture",
+		"1714092246::::0::::1714089765::1::::::::::::::0::$2::1714092245::0::0::sesh-ssh-user::/tmp::2,1::2::101:1700000000:/tmp/tmux::fixture",
 	}, nil).Once()
 	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
 		Return("SESH_SSH_IDENTITY=ssh/host/work%2F1", nil).Once()
@@ -36,6 +36,21 @@ func TestListSessionsIncludesBridgeMetadata(t *testing.T) {
 	assert.Equal(t, "ssh/host/work%2F1", sessions[0].SSHBridgeIdentity)
 	assert.Equal(t, "sesh-ssh-user", sessions[1].Name)
 	assert.Empty(t, sessions[1].SSHBridgeIdentity)
+	assert.Equal(t, "101:1700000000:/tmp/tmux::fixture", sessions[0].ServerGeneration)
+	assert.Equal(t, sessions[0].ServerGeneration, sessions[1].ServerGeneration)
+}
+
+func TestSessionGenerationMetadataFailsClosed(t *testing.T) {
+	const row = "1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::normal::/tmp::2,1::2"
+	for _, generation := range []string{"", "101::/tmp/socket", ":1700000000:/tmp/socket", "101:1700000000:", "#{pid}:#{start_time}:#{socket_path}"} {
+		t.Run(generation, func(t *testing.T) {
+			sessions, err := parseTmuxSessionsOutput([]string{row + "::" + generation})
+			require.NoError(t, err)
+			require.Len(t, sessions, 1)
+			require.Equal(t, "$1", sessions[0].ID)
+			require.Empty(t, sessions[0].ServerGeneration)
+		})
+	}
 }
 
 func TestListSessionsPropagatesBridgeMarkerLookupFailure(t *testing.T) {

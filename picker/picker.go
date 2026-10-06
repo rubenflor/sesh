@@ -108,8 +108,30 @@ func (p *RealPicker) removeEntry(path string) error {
 // killSession ends a live tmux session and refreshes the cache behind it, for
 // the same reason removeEntry does: the cache is what the next launch reads,
 // and without this it would offer a session that no longer exists.
-func (p *RealPicker) killSession(name string) error {
-	if _, err := p.tmux.KillSession(name); err != nil {
+func (p *RealPicker) killSession(sessionID, serverGeneration string) error {
+	if sessionID == "" {
+		return errors.New("session has no server-assigned ID")
+	}
+	if serverGeneration == "" {
+		return errors.New("session has no verified tmux server generation")
+	}
+	// Cached rows may outlive their session. Verify the captured ID is still
+	// present and unmarked without resolving its former display name again.
+	sessions, err := p.tmux.ListSessions()
+	if err != nil {
+		return err
+	}
+	local := false
+	for _, session := range sessions {
+		if session.ID == sessionID && session.ServerGeneration == serverGeneration && session.SSHBridgeIdentity == "" {
+			local = true
+			break
+		}
+	}
+	if !local {
+		return fmt.Errorf("local tmux session %q not found", sessionID)
+	}
+	if _, err := p.tmux.KillSessionInGeneration(sessionID, serverGeneration); err != nil {
 		return err
 	}
 	if p.refreshCache != nil {

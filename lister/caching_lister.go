@@ -40,7 +40,17 @@ func (cl *CachingLister) List(opts ListOptions) (model.SeshSessions, error) {
 	innerOpts := cl.localOptions(ListOptions{Context: opts.Context})
 
 	cached, err := cl.cache.Read()
-	if err == nil {
+	// Old caches lack the ID or its server lifetime. Refetch before showing
+	// their tmux rows; neither a name nor an unscoped ID can authorize deletion.
+	hasSessionIdentities := true
+	for _, key := range cached.Sessions.OrderedIndex {
+		session := cached.Sessions.Directory[key]
+		if session.Src == "tmux" && (session.TmuxSessionID == "" || session.TmuxServerGeneration == "") {
+			hasSessionIdentities = false
+			break
+		}
+	}
+	if err == nil && hasSessionIdentities {
 		age := time.Since(cached.Timestamp)
 		if age < softTTL {
 			slog.Debug("cache: hit (fresh)", "age", age)

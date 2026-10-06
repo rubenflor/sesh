@@ -29,16 +29,18 @@ func aliasesByName(config model.Config) map[string]string {
 // is copied over.
 func tmuxToSesh(session *model.TmuxSession, aliases map[string]string) model.SeshSession {
 	return model.SeshSession{
-		Src:          "tmux",
-		Name:         session.Name,
-		Alias:        aliases[session.Name],
-		Path:         session.Path,
-		Attached:     session.Attached,
-		Windows:      session.Windows,
-		Created:      cloneTime(session.Created),
-		LastAttached: cloneTime(session.LastAttached),
-		Activity:     cloneTime(session.Activity),
-		Alerts:       session.Alerts,
+		Src:                  "tmux",
+		Name:                 session.Name,
+		TmuxSessionID:        session.ID,
+		TmuxServerGeneration: session.ServerGeneration,
+		Alias:                aliases[session.Name],
+		Path:                 session.Path,
+		Attached:             session.Attached,
+		Windows:              session.Windows,
+		Created:              cloneTime(session.Created),
+		LastAttached:         cloneTime(session.LastAttached),
+		Activity:             cloneTime(session.Activity),
+		Alerts:               session.Alerts,
 	}
 }
 

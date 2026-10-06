@@ -18,6 +18,12 @@ type (
 		Name string // The display name
 		Path string // The absolute directory path
 
+		// TmuxSessionID retains the server-assigned identity of a visible local
+		// row for operations. It is cached internally, never part of public JSON.
+		TmuxSessionID string `json:"-"`
+		// TmuxServerGeneration scopes the ID to the server lifetime that issued it.
+		TmuxServerGeneration string `json:"-"`
+
 		StartupCommand        string         // The command to run when the session is started
 		PreviewCommand        string         // The command to run when the session is previewed
 		DisableStartupCommand bool           // Ignore the default startup command if present

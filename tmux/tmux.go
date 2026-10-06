@@ -40,6 +40,7 @@ type Tmux interface {
 	SwitchClientTarget(client string, targetSession string) (string, error)
 	RenameSession(target string, newName string) (string, error)
 	KillSession(target string) (string, error)
+	KillSessionInGeneration(sessionID, serverGeneration string) (string, error)
 }
 
 type RealTmux struct {

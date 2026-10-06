@@ -17,9 +17,11 @@ func testSessions() model.SeshSessions {
 		OrderedIndex: []string{"tmux:main", "zoxide:~/code"},
 		Directory: model.SeshSessionMap{
 			"tmux:main": {
-				Src:  "tmux",
-				Name: "main",
-				Path: "/home/user",
+				Src:                  "tmux",
+				Name:                 "main",
+				Path:                 "/home/user",
+				TmuxSessionID:        "$1",
+				TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture",
 			},
 			"zoxide:~/code": {
 				Src:   "zoxide",

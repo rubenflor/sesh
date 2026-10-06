@@ -54,6 +54,7 @@ func listsessionsformat() string {
 		"#{session_path}",
 		"#{session_stack}",
 		"#{session_windows}",
+		serverGenerationFormat,
 	}
 	return strings.Join(variables, separator)
 }
@@ -61,9 +62,9 @@ func listsessionsformat() string {
 func parseTmuxSessionsOutput(rawList []string) ([]*model.TmuxSession, error) {
 	sessions := make([]*model.TmuxSession, 0, len(rawList))
 	for _, line := range rawList {
-		fields := strings.Split(line, separator)
+		fields := strings.SplitN(line, separator, 22)
 
-		if len(fields) != 21 {
+		if len(fields) != 21 && len(fields) != 22 {
 			continue
 		}
 
@@ -89,6 +90,11 @@ func parseTmuxSessionsOutput(rawList []string) ([]*model.TmuxSession, error) {
 			Path:              fields[18],
 			Stack:             convert.StringToIntSlice(fields[19]),
 			Windows:           convert.StringToInt(fields[20]),
+		}
+		// Read the ID and server lifetime in one tmux response. Missing or
+		// unsupported metadata remains unknown, so destructive operations fail.
+		if len(fields) == 22 && validServerGeneration(fields[21]) {
+			session.ServerGeneration = fields[21]
 		}
 		sessions = append(sessions, session)
 	}

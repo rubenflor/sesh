@@ -21,8 +21,9 @@ const (
 // unavailable.
 type RemoveFunc func(path string) error
 
-// KillFunc kills a live tmux session by name. Nil means killing is unavailable.
-type KillFunc func(name string) error
+// KillFunc kills a live tmux session by verified ID and server lifetime.
+// Nil means killing is unavailable.
+type KillFunc func(sessionID, serverGeneration string) error
 
 // confirmAction is which of the two things ctrl+x does on the highlighted row.
 // It is decided by the row's source, and carried through the dialog and the
@@ -41,6 +42,9 @@ type confirmState struct {
 	action confirmAction
 	name   string
 	path   string
+	// The ID and server lifetime are captured from the row; name is for display.
+	sessionID        string
+	serverGeneration string
 	// yes is the focused button. The dialog opens on Yes, so enter alone
 	// confirms — the row was already chosen by pressing ctrl+x on it.
 	yes bool
@@ -73,7 +77,7 @@ func (m Model) startRemove() (tea.Model, tea.Cmd) {
 		m.status = "Only tmux sessions and zoxide entries can be removed"
 		return m, nil
 	}
-	m.confirm = &confirmState{action: action, name: item.name, path: item.session.Path, yes: true}
+	m.confirm = &confirmState{action: action, name: item.name, path: item.session.Path, sessionID: item.session.TmuxSessionID, serverGeneration: item.session.TmuxServerGeneration, yes: true}
 	return m, nil
 }
 
@@ -132,7 +136,7 @@ func (m Model) removeEntry(target confirmState) tea.Cmd {
 	return func() tea.Msg {
 		msg := entryRemovedMsg{action: target.action, name: target.name, path: target.path}
 		if target.action == actionKill {
-			msg.err = killFunc(target.name)
+			msg.err = killFunc(target.sessionID, target.serverGeneration)
 		} else {
 			msg.err = removeFunc(target.path)
 		}
@@ -150,9 +154,8 @@ func (m Model) removeEntry(target confirmState) tea.Cmd {
 func (m *Model) dropItem(action confirmAction, name, path string) {
 	src, matchPath := zoxideSrc, true
 	if action == actionKill {
-		// A tmux session is identified by its name alone; its path is the
-		// working directory it was created in, which says nothing about which
-		// session was killed.
+		// Match the displayed row, not its working directory: the kill already
+		// targeted the ID captured from that row.
 		src, matchPath = tmuxSrc, false
 	}
 	for i, item := range m.allItems {
@@ -204,7 +207,7 @@ func (m Model) confirmView() string {
 	}
 	// The path is what actually gets removed from zoxide. It is only worth a
 	// line of its own when the row is displayed under some other name, and
-	// nothing to a kill, which targets the name.
+	// nothing to a kill, whose verified ID is kept separate from display text.
 	if c.action == actionRemove && c.path != "" && c.path != c.name {
 		lines = append(lines, faint.Render(truncate(c.path, inner)))
 	}

@@ -56,8 +56,8 @@ func sshIntegrationDeps(t *testing.T, caching bool) (*Deps, *shell.MockShell, *e
 	}
 	s := shell.NewMockShell(t)
 	s.On("ListCmd", "tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-		strings.Join([]string{"300", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "300", "0", "0", "renamed-bridge", "/bridge", "", "1"}, "::"),
-		strings.Join([]string{"200", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", integrationUserCollision, "/user", "", "1"}, "::"),
+		strings.Join([]string{"300", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "300", "0", "0", "renamed-bridge", "/bridge", "", "1", "101:1700000000:/tmp/tmux-fixture"}, "::"),
+		strings.Join([]string{"200", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", integrationUserCollision, "/user", "", "1", "101:1700000000:/tmp/tmux-fixture"}, "::"),
 	}, nil).Maybe()
 	s.On("CmdCapture", "tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
 		Return(model.SSHBridgeIdentityEnv+"="+integrationSSHIdentity, nil).Maybe()

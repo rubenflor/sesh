@@ -35,14 +35,14 @@ func newRemovableModel(err error) (Model, *[]string) {
 }
 
 // newKillableModel loads the test sessions with both backends wired, and
-// returns the record of the session names the kill func was asked to kill.
+// returns the record of the session IDs and generations requested for deletion.
 func newKillableModel(err error) (Model, *[]string) {
 	killed := &[]string{}
 	sessions := testSessions()
 	opts := testOptionsWith(func(o *Options) {
 		o.Remove = func(string) error { return nil }
-		o.Kill = func(name string) error {
-			*killed = append(*killed, name)
+		o.Kill = func(sessionID, serverGeneration string) error {
+			*killed = append(*killed, sessionID+"@"+serverGeneration)
 			return err
 		}
 	})
@@ -141,7 +141,7 @@ func TestConfirm_YesKillsTheSession(t *testing.T) {
 	require.NotNil(t, cmd)
 
 	m = press(m, cmd())
-	assert.Equal(t, []string{"my-project"}, *killed)
+	assert.Equal(t, []string{"$1@" + testServerGeneration}, *killed)
 	assert.Len(t, m.allItems, 4)
 	for _, item := range m.allItems {
 		assert.NotEqual(t, "my-project", item.name)
@@ -171,7 +171,7 @@ func TestKill_DropsTheTmuxRowNotItsNamesake(t *testing.T) {
 	}
 	opts := testOptionsWith(func(o *Options) {
 		o.Remove = func(string) error { return nil }
-		o.Kill = func(string) error { return nil }
+		o.Kill = func(string, string) error { return nil }
 	})
 	result, _ := New(testFetchFunc(sessions), opts).Update(sessionsLoadedMsg{sessions: sessions})
 	m := cursorOnSrc(t, result.(Model), tmuxSrc)
@@ -189,8 +189,8 @@ func TestKill_DropsTheRowWhoseCwdMovedSinceItWasListed(t *testing.T) {
 	m = cursorOnSrc(t, m, tmuxSrc)
 	m = press(m, ctrlX)
 
-	// A kill targets the name, so the row goes even though the path the
-	// session was listed with no longer matches.
+	// The kill targeted the row's captured ID, so the displayed row goes even
+	// though the path the session was listed with no longer matches.
 	m = press(m, entryRemovedMsg{action: actionKill, name: "my-project", path: "/somewhere/else"})
 
 	assert.Len(t, m.allItems, 4)
@@ -507,29 +507,65 @@ func TestRealPicker_RemoveEntry(t *testing.T) {
 func TestRealPicker_KillSession(t *testing.T) {
 	t.Run("refreshes the cache after a successful kill", func(t *testing.T) {
 		mockTmux := new(tmux.MockTmux)
-		mockTmux.EXPECT().KillSession("my-project").Return("", nil)
+		mockTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{ID: "$1", ServerGeneration: testServerGeneration, Name: "my-project"}}, nil)
+		mockTmux.EXPECT().KillSessionInGeneration("$1", testServerGeneration).Return("", nil)
 		refreshed := 0
 		p := &RealPicker{tmux: mockTmux, refreshCache: func() { refreshed++ }}
 
-		assert.NoError(t, p.killSession("my-project"))
+		assert.NoError(t, p.killSession("$1", testServerGeneration))
 		assert.Equal(t, 1, refreshed)
 	})
 
 	t.Run("leaves the cache alone when the kill failed", func(t *testing.T) {
 		mockTmux := new(tmux.MockTmux)
-		mockTmux.EXPECT().KillSession("my-project").Return("", errors.New("session not found"))
+		mockTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{ID: "$1", ServerGeneration: testServerGeneration, Name: "my-project"}}, nil)
+		mockTmux.EXPECT().KillSessionInGeneration("$1", testServerGeneration).Return("", errors.New("session not found"))
 		refreshed := 0
 		p := &RealPicker{tmux: mockTmux, refreshCache: func() { refreshed++ }}
 
-		assert.Error(t, p.killSession("my-project"))
+		assert.Error(t, p.killSession("$1", testServerGeneration))
 		assert.Zero(t, refreshed)
 	})
 
 	t.Run("kills without a cache to refresh", func(t *testing.T) {
 		mockTmux := new(tmux.MockTmux)
-		mockTmux.EXPECT().KillSession("my-project").Return("", nil)
+		mockTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{ID: "$1", ServerGeneration: testServerGeneration, Name: "my-project"}}, nil)
+		mockTmux.EXPECT().KillSessionInGeneration("$1", testServerGeneration).Return("", nil)
 		p := &RealPicker{tmux: mockTmux}
 
-		assert.NoError(t, p.killSession("my-project"))
+		assert.NoError(t, p.killSession("$1", testServerGeneration))
 	})
+}
+
+func TestRealPicker_KillSessionRejectsUnverifiedIDs(t *testing.T) {
+	for _, fixture := range []struct {
+		name       string
+		id         string
+		generation string
+		sessions   []*model.TmuxSession
+		err        error
+	}{
+		{name: "missing ID"},
+		{name: "missing generation", id: "$1"},
+		{name: "inventory error", id: "$1", generation: testServerGeneration, err: errors.New("inventory failed")},
+		{name: "disappeared ID with a namesake", id: "$1", generation: testServerGeneration, sessions: []*model.TmuxSession{{ID: "$2", ServerGeneration: testServerGeneration, Name: "$1"}}},
+		{name: "unknown live generation", id: "$1", generation: testServerGeneration, sessions: []*model.TmuxSession{{ID: "$1", Name: "replacement"}}},
+		{name: "PID reused with different start time", id: "$1", generation: testServerGeneration, sessions: []*model.TmuxSession{{ID: "$1", ServerGeneration: "101:1700000001:/tmp/tmux-fixture", Name: "replacement"}}},
+		{name: "different socket", id: "$1", generation: testServerGeneration, sessions: []*model.TmuxSession{{ID: "$1", ServerGeneration: "101:1700000000:/tmp/replacement", Name: "replacement"}}},
+		{name: "marked bridge", id: "$0", generation: testServerGeneration, sessions: []*model.TmuxSession{{ID: "$0", ServerGeneration: testServerGeneration, Name: "bridge", SSHBridgeIdentity: "ssh/host/work"}}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			mockTmux := tmux.NewMockTmux(t)
+			if fixture.id != "" && fixture.generation != "" {
+				mockTmux.EXPECT().ListSessions().Return(fixture.sessions, fixture.err).Once()
+			}
+			refreshed := 0
+			p := &RealPicker{tmux: mockTmux, refreshCache: func() { refreshed++ }}
+
+			assert.Error(t, p.killSession(fixture.id, fixture.generation))
+			assert.Zero(t, refreshed)
+			mockTmux.AssertNumberOfCalls(t, "KillSession", 0)
+			mockTmux.AssertNumberOfCalls(t, "KillSessionInGeneration", 0)
+		})
+	}
 }

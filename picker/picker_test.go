@@ -16,13 +16,15 @@ import (
 	"github.com/joshmedeski/sesh/v2/model"
 )
 
+const testServerGeneration = "101:1700000000:/tmp/tmux-fixture"
+
 func testSessions() model.SeshSessions {
 	dir := model.SeshSessionMap{
-		"s1": {Name: "my-project", Src: "tmux", Path: "/home/user/my-project"},
+		"s1": {Name: "my-project", Src: "tmux", Path: "/home/user/my-project", TmuxSessionID: "$1", TmuxServerGeneration: testServerGeneration},
 		"s2": {Name: "dotfiles", Src: "config", Path: "/home/user/dotfiles"},
 		"s3": {Name: "~/code/app", Src: "zoxide", Path: "/home/user/code/app"},
 		"s4": {Name: "rails-app", Src: "tmuxinator", Path: "/home/user/rails-app"},
-		"s5": {Name: "notes", Src: "tmux", Path: "/home/user/notes"},
+		"s5": {Name: "notes", Src: "tmux", Path: "/home/user/notes", TmuxSessionID: "$2", TmuxServerGeneration: testServerGeneration},
 	}
 	return model.SeshSessions{
 		OrderedIndex: []string{"s1", "s2", "s3", "s4", "s5"},

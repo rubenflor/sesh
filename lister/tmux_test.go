@@ -1,6 +1,7 @@
 package lister
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"testing"
@@ -18,9 +19,9 @@ import (
 func TestTmuxDiscoveryFiltersBridgeMarkersBeforeConversion(t *testing.T) {
 	m := tmux.NewMockTmux(t)
 	m.EXPECT().ListSessions().Return([]*model.TmuxSession{
-		{Name: "current", Path: "/current"},
-		{Name: "renamed-bridge", Path: "/bridge", SSHBridgeIdentity: "ssh/host/0"},
-		{Name: "sesh-ssh-user", Path: "/user"},
+		{ID: "$1", ServerGeneration: "101:1700000000:/tmp/tmux-fixture", Name: "current", Path: "/current"},
+		{ID: "$0", Name: "renamed-bridge", Path: "/bridge", SSHBridgeIdentity: "ssh/host/0"},
+		{ID: "$2", ServerGeneration: "101:1700000000:/tmp/tmux-fixture", Name: "sesh-ssh-user", Path: "/user"},
 	}, nil)
 	l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
 
@@ -29,6 +30,14 @@ func TestTmuxDiscoveryFiltersBridgeMarkersBeforeConversion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"tmux:current", "tmux:sesh-ssh-user"}, sessions.OrderedIndex)
 	assert.Len(t, sessions.Directory, 2)
+	assert.Equal(t, "$1", sessions.Directory["tmux:current"].TmuxSessionID)
+	assert.Equal(t, "$2", sessions.Directory["tmux:sesh-ssh-user"].TmuxSessionID)
+	assert.Equal(t, "101:1700000000:/tmp/tmux-fixture", sessions.Directory["tmux:current"].TmuxServerGeneration)
+	assert.Equal(t, "101:1700000000:/tmp/tmux-fixture", sessions.Directory["tmux:sesh-ssh-user"].TmuxServerGeneration)
+	public, err := json.Marshal(sessions.Directory)
+	require.NoError(t, err)
+	assert.NotContains(t, string(public), "TmuxSessionID")
+	assert.NotContains(t, string(public), "TmuxServerGeneration")
 	_, found := l.FindTmuxSession("renamed-bridge")
 	assert.False(t, found)
 	_, found = l.FindTmuxSessionByBase("renamed-bridge")

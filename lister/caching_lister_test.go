@@ -2,7 +2,9 @@ package lister_test
 
 import (
 	"context"
+	"encoding/gob"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,7 +22,7 @@ func fakeSessions() model.SeshSessions {
 	return model.SeshSessions{
 		OrderedIndex: []string{"tmux:main"},
 		Directory: model.SeshSessionMap{
-			"tmux:main": {Src: "tmux", Name: "main", Path: "/home/user"},
+			"tmux:main": {Src: "tmux", Name: "main", Path: "/home/user", TmuxSessionID: "$0", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 		},
 	}
 }
@@ -29,8 +31,8 @@ func updatedSessions() model.SeshSessions {
 	return model.SeshSessions{
 		OrderedIndex: []string{"tmux:main", "tmux:dev"},
 		Directory: model.SeshSessionMap{
-			"tmux:main": {Src: "tmux", Name: "main", Path: "/home/user"},
-			"tmux:dev":  {Src: "tmux", Name: "dev", Path: "/home/user/dev"},
+			"tmux:main": {Src: "tmux", Name: "main", Path: "/home/user", TmuxSessionID: "$0", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
+			"tmux:dev":  {Src: "tmux", Name: "dev", Path: "/home/user/dev", TmuxSessionID: "$1", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 		},
 	}
 }
@@ -210,6 +212,86 @@ func TestCachingLister_WarmHit(t *testing.T) {
 	inner.AssertNotCalled(t, "List")
 }
 
+func TestCachingLister_LegacyTmuxRowsRefetchBeforeDisplay(t *testing.T) {
+	for _, age := range []time.Duration{0, time.Hour} {
+		t.Run(age.String(), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "sessions.gob")
+			// Match the old gob field structure, which has no TmuxSessionID.
+			type legacySession struct{ Src, Name, Path string }
+			legacy := struct {
+				Sessions struct {
+					Directory    map[string]legacySession
+					OrderedIndex []string
+				}
+				Timestamp time.Time
+			}{Timestamp: time.Now().Add(-age)}
+			legacy.Sessions.OrderedIndex = []string{"tmux:$0", "config:work"}
+			legacy.Sessions.Directory = map[string]legacySession{
+				"tmux:$0":     {Src: "tmux", Name: "$0", Path: "/stale"},
+				"config:work": {Src: "config", Name: "work", Path: "/work"},
+			}
+			file, err := os.Create(path)
+			require.NoError(t, err)
+			err = gob.NewEncoder(file).Encode(legacy)
+			require.NoError(t, file.Close())
+			require.NoError(t, err)
+			fc := cache.NewFileCacheWithPath(path)
+			cached, err := fc.Read()
+			require.NoError(t, err)
+			require.Empty(t, cached.Sessions.Directory["tmux:$0"].TmuxSessionID)
+
+			fresh := model.SeshSessions{
+				OrderedIndex: []string{"tmux:$0", "config:work"},
+				Directory: model.SeshSessionMap{
+					"tmux:$0":     {Src: "tmux", Name: "$0", Path: "/fresh", TmuxSessionID: "$1", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
+					"config:work": {Src: "config", Name: "work", Path: "/work"},
+				},
+			}
+			inner := lister.NewMockLister(t)
+			ctx := t.Context()
+			inner.EXPECT().List(lister.ListOptions{Context: ctx}).Return(fresh, nil).Once()
+			cl := lister.NewCachingLister(inner, fc, false)
+			t.Cleanup(cl.Wait)
+			opts := lister.ListOptions{Context: ctx, Tmux: true}
+			got, err := cl.List(opts)
+			require.NoError(t, err)
+			require.Equal(t, []string{"tmux:$0"}, got.OrderedIndex)
+			require.Equal(t, fresh.Directory["tmux:$0"], got.Directory["tmux:$0"])
+			// Both the display and cache are updated before List returns,
+			// without waiting for a stale-cache background refresh.
+			cached, err = fc.Read()
+			require.NoError(t, err)
+			require.Equal(t, fresh, cached.Sessions)
+			require.WithinDuration(t, time.Now(), cached.Timestamp, time.Second)
+			warm, err := cl.List(opts)
+			require.NoError(t, err)
+			require.Equal(t, got, warm)
+		})
+	}
+}
+
+func TestCachingLister_UnscopedIDsRefetchBeforeDisplay(t *testing.T) {
+	for _, age := range []time.Duration{0, time.Hour} {
+		t.Run(age.String(), func(t *testing.T) {
+			stale := fakeSessions()
+			row := stale.Directory["tmux:main"]
+			row.TmuxServerGeneration = ""
+			stale.Directory["tmux:main"] = row
+			fresh := fakeSessions()
+			fc := cache.NewMockCache(t)
+			fc.EXPECT().Read().Return(cache.CachedData{Sessions: stale, Timestamp: time.Now().Add(-age)}, nil).Once()
+			fc.EXPECT().Write(fresh).Return(nil).Once()
+			inner := lister.NewMockLister(t)
+			inner.EXPECT().List(lister.ListOptions{}).Return(fresh, nil).Once()
+			cl := lister.NewCachingLister(inner, fc, false)
+			t.Cleanup(cl.Wait)
+			got, err := cl.List(lister.ListOptions{Tmux: true})
+			require.NoError(t, err)
+			require.Equal(t, fresh, got)
+		})
+	}
+}
+
 func TestCachingLister_RefreshThenWarmRead(t *testing.T) {
 	dir := t.TempDir()
 	fc := cache.NewFileCacheWithPath(filepath.Join(dir, "sessions.gob"))
@@ -311,9 +393,9 @@ func sessionsWithAttached() model.SeshSessions {
 	return model.SeshSessions{
 		OrderedIndex: []string{"tmux:main", "tmux:dev", "tmux:work"},
 		Directory: model.SeshSessionMap{
-			"tmux:main": {Src: "tmux", Name: "main", Path: "/home/user", Attached: 1},
-			"tmux:dev":  {Src: "tmux", Name: "dev", Path: "/home/user/dev"},
-			"tmux:work": {Src: "tmux", Name: "work", Path: "/home/user/work"},
+			"tmux:main": {Src: "tmux", Name: "main", Path: "/home/user", Attached: 1, TmuxSessionID: "$0", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
+			"tmux:dev":  {Src: "tmux", Name: "dev", Path: "/home/user/dev", TmuxSessionID: "$1", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
+			"tmux:work": {Src: "tmux", Name: "work", Path: "/home/user/work", TmuxSessionID: "$2", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 		},
 	}
 }
@@ -407,7 +489,7 @@ func mixedSessions() model.SeshSessions {
 	return model.SeshSessions{
 		OrderedIndex: []string{"tmux:main", "config:project", "zoxide:code"},
 		Directory: model.SeshSessionMap{
-			"tmux:main":      {Src: "tmux", Name: "main", Path: "/home/user"},
+			"tmux:main":      {Src: "tmux", Name: "main", Path: "/home/user", TmuxSessionID: "$0", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 			"config:project": {Src: "config", Name: "project", Path: "/home/user/project"},
 			"zoxide:code":    {Src: "zoxide", Name: "code", Path: "/home/user/code"},
 		},
@@ -496,9 +578,9 @@ func TestCachingLister_HideAttached_BeforeHideDuplicates(t *testing.T) {
 	sessions := model.SeshSessions{
 		OrderedIndex: []string{"tmux:project", "config:project", "tmux:other"},
 		Directory: model.SeshSessionMap{
-			"tmux:project":   {Src: "tmux", Name: "project", Path: "/p"},
+			"tmux:project":   {Src: "tmux", Name: "project", Path: "/p", TmuxSessionID: "$0", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 			"config:project": {Src: "config", Name: "project", Path: "/p"},
-			"tmux:other":     {Src: "tmux", Name: "other", Path: "/o"},
+			"tmux:other":     {Src: "tmux", Name: "other", Path: "/o", TmuxSessionID: "$1", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 		},
 	}
 	require.NoError(t, fc.Write(sessions))
@@ -523,7 +605,7 @@ func TestCachingLister_HideDuplicates_PostCache(t *testing.T) {
 	sessions := model.SeshSessions{
 		OrderedIndex: []string{"tmux:project", "config:project", "zoxide:other"},
 		Directory: model.SeshSessionMap{
-			"tmux:project":   {Src: "tmux", Name: "project", Path: "/home/user/project"},
+			"tmux:project":   {Src: "tmux", Name: "project", Path: "/home/user/project", TmuxSessionID: "$0", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 			"config:project": {Src: "config", Name: "project", Path: "/home/user/project"},
 			"zoxide:other":   {Src: "zoxide", Name: "other", Path: "/home/user/other"},
 		},
