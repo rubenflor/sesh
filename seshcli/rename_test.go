@@ -99,6 +99,7 @@ func TestRunEnrich(t *testing.T) {
 		mockNamer := new(namer.MockNamer)
 		mockGithub := new(github.MockGithub)
 		mockTmux := newTmuxRenamer()
+		mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: "400-status", ID: "$1"}}, nil).Once()
 		mockLister.On("GetAttachedTmuxSession").
 			Return(model.SeshSession{Name: "400-status", Path: "/p"}, true)
 		mockNamer.On("Name", "/p").Return("400-status", nil)
@@ -112,7 +113,7 @@ func TestRunEnrich(t *testing.T) {
 		err := runEnrich(deps, nil)
 
 		assert.NoError(t, err)
-		assert.Equal(t, "400-status", mockTmux.gotTarget)
+		assert.Equal(t, "$1", mockTmux.gotTarget)
 		assert.Equal(t, "400-status — warm the cache", mockTmux.gotNewName)
 	})
 

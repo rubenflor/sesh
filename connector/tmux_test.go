@@ -69,6 +69,7 @@ func TestEstablishTmuxConnection(t *testing.T) {
 
 func TestConnectToTmuxDetachedSwitchesClientAndFocuses(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
+	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "nutiliti/2345", ID: "$3"}}, nil).Once()
 	mFocuser := focuser.NewMockFocuser(t)
 
 	// New session path
@@ -83,7 +84,7 @@ func TestConnectToTmuxDetachedSwitchesClientAndFocuses(t *testing.T) {
 		{Name: "/dev/ttys002", TTY: "/dev/ttys002", SessionID: "$2"},
 	}, nil)
 	mTmux.EXPECT().ResolveClient().Return("/dev/ttys002")
-	mTmux.EXPECT().SwitchClientTarget("/dev/ttys002", "nutiliti/2345").Return("", nil)
+	mTmux.EXPECT().SwitchClientTarget("/dev/ttys002", "$3").Return("", nil)
 	mFocuser.EXPECT().Activate("wezterm").Return(true, nil)
 
 	c := NewConnector(
@@ -101,6 +102,7 @@ func TestConnectToTmuxDetachedSwitchesClientAndFocuses(t *testing.T) {
 
 func TestConnectToTmuxDetachedWithNoClientStillFocuses(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
+	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "nutiliti/2345", ID: "$3"}}, nil).Once()
 	mFocuser := focuser.NewMockFocuser(t)
 
 	// Nothing is attached to the server, so there is no client to switch.
@@ -127,6 +129,7 @@ func TestConnectToTmuxDetachedWithNoClientStillFocuses(t *testing.T) {
 // nothing, and report success.
 func TestConnectToTmuxDetachedReportsUnreachableTmux(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
+	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "nutiliti/2345", ID: "$3"}}, nil).Once()
 	mFocuser := focuser.NewMockFocuser(t)
 
 	mTmux.EXPECT().IsAttached().Return(false)
@@ -143,7 +146,7 @@ func TestConnectToTmuxDetachedReportsUnreachableTmux(t *testing.T) {
 		Session: model.SeshSession{Src: "tmux", Name: "nutiliti/2345", Path: "/repo/w/2345"},
 	}
 	_, err := connectToTmux(c, conn, model.ConnectOpts{Switch: true})
-	require.ErrorContains(t, err, "couldn't reach tmux to switch to 'nutiliti/2345'")
+	require.ErrorContains(t, err, "couldn't reach tmux to switch to '$3'")
 }
 
 func TestConnectSSHCreatesBridgeAndAttaches(t *testing.T) {

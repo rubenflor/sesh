@@ -192,7 +192,8 @@ func (suite *PreviewerTestSuite) setupTmuxMocks(inputName, trimmedName, expected
 		Name: trimmedName,
 		Path: testHomePath + "/c/" + trimmedName,
 	}, true)
-	suite.mockTmux.On("CapturePane", trimmedName).Return(expectedOutput, nil)
+	suite.mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: trimmedName, ID: "$1"}}, nil)
+	suite.mockTmux.On("CapturePane", "$1").Return(expectedOutput, nil)
 }
 
 func (suite *PreviewerTestSuite) setupDefaultConfigMocks(inputName, trimmedName, expectedPath, expectedOutput string) {

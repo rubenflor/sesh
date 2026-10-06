@@ -3,8 +3,10 @@ package connector
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/joshmedeski/sesh/v2/model"
+	"github.com/joshmedeski/sesh/v2/tmux"
 )
 
 func tmuxStrategy(c *RealConnector, name string) (model.Connection, error) {
@@ -35,7 +37,12 @@ func connectToTmux(c *RealConnector, connection model.Connection, opts model.Con
 		}
 	}
 
-	return c.focusSession(connection.Session.Name, opts.Switch)
+	sessionID, err := tmux.LocalSessionID(c.tmux, connection.Session.Name)
+	if err != nil {
+		return "", err
+	}
+	message, err := c.focusSession(sessionID, opts.Switch)
+	return strings.Replace(message, sessionID, connection.Session.Name, 1), err
 }
 
 func (c *RealConnector) connectDetached(sessionName string) (string, error) {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/namer"
+	"github.com/joshmedeski/sesh/v2/tmux"
 )
 
 func NewRenameCommand(base *BaseDeps) *cobra.Command {
@@ -44,7 +45,11 @@ func runEnrich(deps *Deps, args []string) error {
 	if newName == "" || newName == target.Name {
 		return nil
 	}
-	_, err := deps.Tmux.RenameSession(target.Name, newName)
+	sessionID, err := tmux.LocalSessionID(deps.Tmux, target.Name)
+	if err != nil {
+		return err
+	}
+	_, err = deps.Tmux.RenameSession(sessionID, newName)
 	return err
 }
 

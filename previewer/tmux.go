@@ -18,7 +18,11 @@ func (s *TmuxPreviewStrategy) Execute(name string) (string, error) {
 	session, sessionExists := s.lister.FindTmuxSession(name)
 
 	if sessionExists {
-		output, err := s.tmux.CapturePane(session.Name)
+		sessionID, err := tmux.LocalSessionID(s.tmux, session.Name)
+		if err != nil {
+			return "", err
+		}
+		output, err := s.tmux.CapturePane(sessionID)
 		if err != nil {
 			return "", err
 		}
