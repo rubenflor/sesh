@@ -48,16 +48,20 @@ func (e *OsExec) Command(name string, args ...string) ExecCmd {
 // 250 ms to drain. Wait still reaps the direct child before returning.
 // On Unix, cancellation and completion also kill the owned process group so
 // descendants cannot outlive discovery while retaining inherited pipes.
+// Platforms without Unix process-group cleanup are rejected before spawning.
 func (e *OsExec) RunContext(ctx context.Context, name string, args ...string) (CommandResult, error) {
 	command := exec.CommandContext(ctx, name, args...)
 	command.WaitDelay = 250 * time.Millisecond
-	cleanup := prepareProcessCleanup(command)
+	cleanup, err := prepareProcessCleanup(command)
+	if err != nil {
+		return CommandResult{ExitCode: -1}, err
+	}
 	defer cleanup()
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 
-	err := command.Run()
+	err = command.Run()
 	result := CommandResult{
 		Stdout:   stdout.Bytes(),
 		Stderr:   stderr.Bytes(),

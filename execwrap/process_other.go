@@ -2,6 +2,13 @@
 
 package execwrap
 
-import "os/exec"
+import (
+	"fmt"
+	"os/exec"
+	"runtime"
+)
 
-func prepareProcessCleanup(command *exec.Cmd) func() { return func() {} }
+// Never start an uncontained probe on a platform without tree cleanup.
+func prepareProcessCleanup(_ *exec.Cmd) (func(), error) {
+	return nil, fmt.Errorf("process execution is unsupported on %s", runtime.GOOS)
+}
