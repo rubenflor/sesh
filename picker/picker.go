@@ -47,7 +47,7 @@ type WorktreePickerOptions struct {
 }
 
 type Picker interface {
-	Pick(fetchFunc FetchFunc, opts PickerOptions) (string, error)
+	Pick(fetchFunc FetchFunc, opts PickerOptions) (model.SeshSession, error)
 	// PickWorktree picks a worktree by issue number or title. The second return
 	// is false when nothing was chosen — the picker was quit, or had no rows.
 	PickWorktree(fetchFunc WorktreeFetchFunc, opts WorktreePickerOptions) (model.WorktreeEntry, bool, error)
@@ -65,8 +65,7 @@ type RealPicker struct {
 	// zoxide is the frecency backend, reached only to remove an entry the user
 	// confirmed removing from the picker.
 	zoxide zoxide.Zoxide
-	// tmux is reached only to kill a live session the user confirmed killing
-	// from the picker.
+	// tmux previews and deletes local rows using their verified identity.
 	tmux tmux.Tmux
 	// refreshCache refetches the session list into the cache after a removal.
 	// Nil when caching is off, which is also when there is nothing to refresh.
@@ -218,7 +217,14 @@ func aliasFilterPrefix(configured *string) string {
 	return *configured
 }
 
-func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (string, error) {
+func (p *RealPicker) previewSession(session model.SeshSession) (string, error) {
+	if session.Src == "tmux" {
+		return previewer.PreviewTmuxSession(p.tmux, session)
+	}
+	return p.previewer.Preview(session.Name)
+}
+
+func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (model.SeshSession, error) {
 	showIcons := false
 	if opts.ShowIcons != nil {
 		showIcons = *opts.ShowIcons
@@ -266,7 +272,7 @@ func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (string, erro
 	// unaware of the package, mirroring how sessions arrive via FetchFunc.
 	var previewFunc PreviewFunc
 	if p.previewer != nil {
-		previewFunc = p.previewer.Preview
+		previewFunc = p.previewSession
 	}
 
 	// Removal reaches the backend the same way, so the TUI never learns what
@@ -311,19 +317,19 @@ func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (string, erro
 	prog := tea.NewProgram(m, programOpts...)
 	result, err := prog.Run()
 	if err != nil {
-		return "", fmt.Errorf("picker error: %w", err)
+		return model.SeshSession{}, fmt.Errorf("picker error: %w", err)
 	}
 	pickerModel, ok := result.(Model)
 	if !ok {
-		return "", errors.New("unexpected model type")
+		return model.SeshSession{}, errors.New("unexpected model type")
 	}
 	if pickerModel.LoadErr() != nil {
-		return "", fmt.Errorf("couldn't list sessions: %w", pickerModel.LoadErr())
+		return model.SeshSession{}, fmt.Errorf("couldn't list sessions: %w", pickerModel.LoadErr())
 	}
 	if pickerModel.Quit() {
-		return "", nil
+		return model.SeshSession{}, nil
 	}
-	return pickerModel.Chosen(), nil
+	return pickerModel.ChosenSession(), nil
 }
 
 func (p *RealPicker) PickWorktree(fetchFunc WorktreeFetchFunc, opts WorktreePickerOptions) (model.WorktreeEntry, bool, error) {

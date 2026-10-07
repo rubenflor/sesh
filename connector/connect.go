@@ -41,6 +41,16 @@ func (c *RealConnector) Resolve(name string) (model.Connection, error) {
 	return model.Connection{Found: false}, nil
 }
 
+// ConnectSession consumes picker rows without resolving a local display name.
+// Other sources retain their existing name-based connection behavior.
+func (c *RealConnector) ConnectSession(session model.SeshSession, opts model.ConnectOpts) (string, error) {
+	if session.Src != "tmux" {
+		return c.Connect(session.Name, opts)
+	}
+	c.zoxide.Add(session.Path)
+	return connectToTmux(c, model.Connection{Session: session}, opts)
+}
+
 // TODO: send to logging (local txt file?)
 func (c *RealConnector) Connect(name string, opts model.ConnectOpts) (string, error) {
 	connectStrategy := map[string]func(c *RealConnector, connection model.Connection, opts model.ConnectOpts) (string, error){

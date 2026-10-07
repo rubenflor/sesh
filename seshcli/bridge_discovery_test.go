@@ -85,7 +85,7 @@ func TestPickerInputHidesMarkedSSHBridges(t *testing.T) {
 					"tmux:local":         {Src: "tmux", Name: "local", Path: "/local", TmuxSessionID: "$1", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 					"tmux:sesh-ssh-user": {Src: "tmux", Name: "sesh-ssh-user", Path: "/user", TmuxSessionID: "$3", TmuxServerGeneration: "101:1700000000:/tmp/tmux-fixture"},
 				}, sessions.Directory)
-			}).Return("", nil).Once()
+			}).Return(model.SeshSession{}, nil).Once()
 			deps.Picker = mockPicker
 			cmd := newPickerCommand(&deps.BaseDeps, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
 			cmd.SetArgs(tt.args)

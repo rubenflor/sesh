@@ -68,7 +68,7 @@ func TestNew(t *testing.T) {
 	assert.Len(t, m.allItems, 5)
 	assert.Len(t, m.filtered, 5)
 	assert.Equal(t, 0, m.cursor)
-	assert.Equal(t, "", m.chosen)
+	assert.Empty(t, m.chosen)
 	assert.False(t, m.quit)
 	assert.False(t, m.loading)
 }
@@ -177,7 +177,7 @@ func TestQuery_IsEditable(t *testing.T) {
 func TestQuery_SingleMatchDoesNotAutoSelect(t *testing.T) {
 	m, _ := newQueryModel("notes")
 
-	assert.Equal(t, "", m.chosen, "the picker still waits for enter")
+	assert.Empty(t, m.chosen, "the picker still waits for enter")
 	assert.False(t, m.quit)
 }
 
@@ -194,9 +194,9 @@ func TestQuery_EntersAliasMode(t *testing.T) {
 func TestQuery_EntersIndexMode(t *testing.T) {
 	m, _ := newQueryModel(indexFilterPrefix)
 
-	name, handled := m.indexJump("2")
+	session, handled := m.indexJump("2")
 	assert.True(t, handled)
-	assert.Equal(t, "dotfiles", name)
+	assert.Equal(t, "dotfiles", session.Name)
 }
 
 func TestQuery_DoesNotAutoConnectExactAlias(t *testing.T) {
@@ -206,7 +206,7 @@ func TestQuery_DoesNotAutoConnectExactAlias(t *testing.T) {
 	})
 
 	assert.Nil(t, aliasTick(cmd), "auto-connect stays a reward for typing")
-	assert.Equal(t, "", m.chosen)
+	assert.Empty(t, m.chosen)
 }
 
 func TestQuery_AutoConnectsAfterAKeystroke(t *testing.T) {
@@ -1550,9 +1550,9 @@ func TestWindowsText(t *testing.T) {
 // testPreviewFunc records every session it is asked about, so tests can assert
 // which fetches actually happened.
 func testPreviewFunc(asked *[]string) PreviewFunc {
-	return func(name string) (string, error) {
-		*asked = append(*asked, name)
-		return "preview of " + name, nil
+	return func(session model.SeshSession) (string, error) {
+		*asked = append(*asked, session.Name)
+		return "preview of " + session.Name, nil
 	}
 }
 
@@ -1669,13 +1669,22 @@ func TestPreview_AlreadyPreviewedSessionIsNotRefetched(t *testing.T) {
 	// still showing dotfiles, so there is nothing to fetch.
 	result, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = result.(Model)
-	require.NotNil(t, previewFetch(cmd), "moving away schedules a fetch")
+	fetch := previewFetch(cmd)
+	require.NotNil(t, fetch, "moving away schedules a fetch")
+	result, held := m.Update(*fetch)
+	m = result.(Model)
+	require.NotNil(t, held)
+	seq := m.previewSeq
 
 	result, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = result.(Model)
 
 	assert.Nil(t, previewFetch(cmd), "the displayed preview should not be refetched")
 	assert.Len(t, *asked, before, "no preview command should have run")
+	assert.Equal(t, seq+1, m.previewSeq, "returning to loaded content invalidates the other target's pending result")
+	result, _ = m.Update(held())
+	m = result.(Model)
+	assert.Equal(t, "preview of dotfiles", m.previewContent)
 }
 
 func TestPreview_StaleResultIsDiscarded(t *testing.T) {
@@ -1684,10 +1693,11 @@ func TestPreview_StaleResultIsDiscarded(t *testing.T) {
 	m = loadPreview(t, result.(Model), cmd)
 	require.Equal(t, "dotfiles", m.previewName)
 
-	// A result from a cursor position the user has since left behind.
+	// Even a result for the same identity must have the current sequence.
 	result, _ = m.Update(previewLoadedMsg{
 		seq:     m.previewSeq - 1,
-		name:    "my-project",
+		target:  previewTargetFor(m.filtered[m.cursor].item.session),
+		name:    "dotfiles",
 		content: "stale content",
 	})
 	m = result.(Model)
@@ -1732,9 +1742,10 @@ func TestPreview_KeepsPreviousContentWhileLoading(t *testing.T) {
 func TestPreview_ErrorIsShownWithoutQuitting(t *testing.T) {
 	m, _ := previewModel()
 	result, _ := m.Update(previewLoadedMsg{
-		seq:  m.previewSeq,
-		name: "my-project",
-		err:  errors.New("preview_command exploded"),
+		seq:    m.previewSeq,
+		target: previewTargetFor(m.filtered[m.cursor].item.session),
+		name:   "my-project",
+		err:    errors.New("preview_command exploded"),
 	})
 	m = result.(Model)
 
@@ -1843,7 +1854,7 @@ func TestPreview_ViewFitsTerminalWidth(t *testing.T) {
 
 func TestPreview_LongContentIsClipped(t *testing.T) {
 	m, _ := previewModel(func(o *Options) {
-		o.PreviewFunc = func(string) (string, error) {
+		o.PreviewFunc = func(model.SeshSession) (string, error) {
 			return strings.Repeat(strings.Repeat("x", 400)+"\n", 200), nil
 		}
 	})

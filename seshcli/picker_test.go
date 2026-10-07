@@ -27,7 +27,7 @@ func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
 	})
 	const identity = "ssh/first/nutiliti%2F2345%25%20caf%C3%A9"
 	mockPicker := picker.NewMockPicker(t)
-	mockPicker.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, _ picker.PickerOptions) (string, error) {
+	mockPicker.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, _ picker.PickerOptions) (model.SeshSession, error) {
 		sessions, err := fetch()
 		require.NoError(t, err)
 		require.Len(t, sessions.OrderedIndex, 1)
@@ -35,7 +35,7 @@ func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
 		assert.Equal(t, "ssh", selected.Src)
 		assert.Equal(t, identity, selected.Name)
 		assert.Empty(t, selected.Path)
-		return selected.Name, nil
+		return selected, nil
 	}).Once()
 	const bridge = "sesh-ssh-f89c7664900e54d378d5c534-0"
 	mTmux := tmux.NewMockTmux(t)
@@ -74,7 +74,7 @@ func TestPickerSSHOnly(t *testing.T) {
 		got, err := args.Get(0).(picker.FetchFunc)()
 		require.NoError(t, err)
 		assert.Equal(t, sessions, got)
-	}).Return("", nil).Once()
+	}).Return(model.SeshSession{}, nil).Once()
 	cmd := newPickerCommand(nil, func(*cobra.Command, *BaseDeps) (*Deps, error) {
 		return &Deps{Config: model.Config{SSH: model.SSHConfig{Hosts: []string{"server"}}}, Lister: mockLister, Picker: mockPicker}, nil
 	})
@@ -103,7 +103,7 @@ func TestPickerSSHSourceSelection(t *testing.T) {
 				got, err := args.Get(0).(picker.FetchFunc)()
 				require.NoError(t, err)
 				assert.Equal(t, tt.sessions, got)
-			}).Return("", nil).Once()
+			}).Return(model.SeshSession{}, nil).Once()
 			deps := &Deps{
 				BaseDeps: BaseDeps{Exec: execwrap.NewMockExec(t)},
 				Config:   tt.config,
@@ -154,7 +154,7 @@ func TestPickerExitCancelsAndWaitsForDiscovery(t *testing.T) {
 			pk := picker.NewMockPicker(t)
 			var lateFetch picker.FetchFunc
 			queuedDone := make(chan error, 1)
-			pk.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, opts picker.PickerOptions) (string, error) {
+			pk.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, opts picker.PickerOptions) (model.SeshSession, error) {
 				assert.Equal(t, ctx, opts.Context)
 				lateFetch = fetch
 				go func() { _, _ = fetch(); close(fetchDone) }()
@@ -162,17 +162,17 @@ func TestPickerExitCancelsAndWaitsForDiscovery(t *testing.T) {
 				go func() { _, err := fetch(); queuedDone <- err }()
 				switch mode {
 				case "selection":
-					return "local", nil
+					return model.SeshSession{Src: "config", Name: "local"}, nil
 				case "error":
-					return "", assert.AnError
+					return model.SeshSession{}, assert.AnError
 				case "parent cancellation":
 					cancel()
 				}
-				return "", nil
+				return model.SeshSession{}, nil
 			})
 			mc := connector.NewMockConnector(t)
 			if mode == "selection" {
-				mc.EXPECT().Connect("local", model.ConnectOpts{}).Run(func(string, model.ConnectOpts) {
+				mc.EXPECT().ConnectSession(model.SeshSession{Src: "config", Name: "local"}, model.ConnectOpts{}).Run(func(model.SeshSession, model.ConnectOpts) {
 					select {
 					case <-release:
 					default:

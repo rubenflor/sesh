@@ -58,7 +58,7 @@ type IconFunc func(session model.SeshSession) string
 // PreviewFunc renders the preview of a single session. It is called from a
 // tea.Cmd, never from Update or View: some strategies shell out, and blocking
 // the event loop on every cursor move would make the picker feel sluggish.
-type PreviewFunc func(name string) (string, error)
+type PreviewFunc func(session model.SeshSession) (string, error)
 
 // sessionsLoadedMsg carries the result of the async fetch back to Update().
 type sessionsLoadedMsg struct {
@@ -70,15 +70,29 @@ type sessionsLoadedMsg struct {
 // session highlighted at the time it was scheduled. The seq identifies that
 // cursor position so later movement can invalidate it.
 type previewFetchMsg struct {
-	seq  int
-	name string
+	seq     int
+	session model.SeshSession
+}
+
+// previewTarget is the execution identity, separate from the display name.
+// Non-tmux previews keep their existing name-based dispatch within each source.
+type previewTarget struct {
+	src, name             string
+	sessionID, generation string
+}
+
+func previewTargetFor(session model.SeshSession) previewTarget {
+	if session.Src == "tmux" {
+		return previewTarget{src: session.Src, sessionID: session.TmuxSessionID, generation: session.TmuxServerGeneration}
+	}
+	return previewTarget{src: session.Src, name: session.Name}
 }
 
 // previewLoadedMsg carries a rendered preview back to Update(). A result whose
-// seq is no longer current is discarded: the cursor has moved on, and the pane
-// keeps showing the last preview that did belong to its session.
+// seq or target is no longer current is discarded: the cursor has moved on.
 type previewLoadedMsg struct {
 	seq     int
+	target  previewTarget
 	name    string
 	content string
 	err     error
@@ -172,7 +186,7 @@ type Model struct {
 	groupSeparator bool
 	width          int
 	height         int
-	chosen         string
+	chosen         model.SeshSession
 	quit           bool
 	showIcons      bool
 	showWindows    bool
@@ -211,18 +225,19 @@ type Model struct {
 	previewOn       bool
 	previewWidthPct int
 	previewMinWidth int
-	// previewName is the session the current content belongs to, and
-	// previewPending the one being fetched. Together they keep the cursor
+	// previewTarget owns the current content; previewPending owns the fetch.
+	// previewName is only the display name. Together the targets keep the cursor
 	// landing back on an already-previewed row from refetching it.
 	// previewBorderName is the resolved divider style, so an unset or bogus
 	// config value never reaches the renderer.
 	previewBorderName string
 	previewName       string
-	previewPending    string
+	previewTarget     previewTarget
+	previewPending    previewTarget
 	previewContent    string
 	previewErr        error
-	// previewSeq increments on every request so a result that arrives after the
-	// cursor moved on can be told apart from the current one.
+	// previewSeq increments when the target changes or pending work is cancelled,
+	// so a late result can be told apart from the current one.
 	previewSeq int
 }
 
@@ -426,12 +441,17 @@ func (m *Model) syncInputWidth() {
 	m.filterInput.SetWidth(m.contentWidth() - 4)
 }
 
-// highlightedName returns the name of the session under the cursor.
-func (m Model) highlightedName() (string, bool) {
+// highlightedSession retains the row's identity alongside its display name.
+func (m Model) highlightedSession() (model.SeshSession, bool) {
 	if m.cursor < 0 || m.cursor >= len(m.filtered) {
-		return "", false
+		return model.SeshSession{}, false
 	}
-	return m.filtered[m.cursor].item.name, true
+	return m.filtered[m.cursor].item.session, true
+}
+
+func (m Model) previewMatches(target previewTarget) bool {
+	session, ok := m.highlightedSession()
+	return m.previewOn && ok && previewTargetFor(session) == target
 }
 
 // schedulePreview arms a debounced fetch for the highlighted session, and
@@ -442,29 +462,36 @@ func (m *Model) schedulePreview() tea.Cmd {
 		return nil
 	}
 
-	name, ok := m.highlightedName()
+	session, ok := m.highlightedSession()
 	if !ok {
 		// Nothing is highlighted, so there is nothing the old content could
 		// still be describing.
 		m.previewSeq++
-		m.previewName, m.previewPending, m.previewContent, m.previewErr = "", "", "", nil
+		m.previewTarget, m.previewPending = previewTarget{}, previewTarget{}
+		m.previewName, m.previewContent, m.previewErr = "", "", nil
 		return nil
 	}
-	if name == m.previewName || name == m.previewPending {
+	target := previewTargetFor(session)
+	if target == m.previewPending || (m.previewPending == (previewTarget{}) && target == m.previewTarget) {
 		return nil
 	}
 
 	m.previewSeq++
-	m.previewPending = name
-	msg := previewFetchMsg{seq: m.previewSeq, name: name}
+	m.previewPending = previewTarget{}
+	if target == m.previewTarget {
+		// Returning to loaded content still invalidates another target's fetch.
+		return nil
+	}
+	m.previewPending = target
+	msg := previewFetchMsg{seq: m.previewSeq, session: session}
 	return tea.Tick(previewDebounce, func(time.Time) tea.Msg { return msg })
 }
 
-func (m Model) fetchPreview(seq int, name string) tea.Cmd {
+func (m Model) fetchPreview(seq int, session model.SeshSession) tea.Cmd {
 	previewFunc := m.previewFunc
 	return func() tea.Msg {
-		content, err := previewFunc(name)
-		return previewLoadedMsg{seq: seq, name: name, content: content, err: err}
+		content, err := previewFunc(session)
+		return previewLoadedMsg{seq: seq, target: previewTargetFor(session), name: session.Name, content: content, err: err}
 	}
 }
 
@@ -480,21 +507,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok || alias.Alias != msg.alias || m.disableAliasAutoConnect {
 			return m, nil
 		}
-		m.chosen = alias.Target
+		item, _ := m.aliasMatch(alias.Alias)
+		m.chosen = item.session
 		return m, tea.Quit
 
 	case previewFetchMsg:
 		// The tick can't be cancelled, so a stale one still arrives.
-		if msg.seq != m.previewSeq {
+		if msg.seq != m.previewSeq || !m.previewMatches(previewTargetFor(msg.session)) {
 			return m, nil
 		}
-		return m, m.fetchPreview(msg.seq, msg.name)
+		return m, m.fetchPreview(msg.seq, msg.session)
 
 	case previewLoadedMsg:
-		if msg.seq != m.previewSeq {
+		if msg.seq != m.previewSeq || !m.previewMatches(msg.target) {
 			return m, nil
 		}
-		m.previewPending = ""
+		m.previewPending = previewTarget{}
+		m.previewTarget = msg.target
 		m.previewName = msg.name
 		m.previewContent = msg.content
 		m.previewErr = msg.err
@@ -543,7 +572,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if len(m.filtered) > 0 {
 				selected := m.filtered[m.cursor]
-				m.chosen = selected.item.name
+				m.chosen = selected.item.session
 			}
 			return m, tea.Quit
 
@@ -583,7 +612,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// the highlighted row rather than waiting on a request made
 				// before the pane was hidden.
 				m.previewSeq++
-				m.previewPending = ""
+				m.previewPending = previewTarget{}
 				return m, nil
 			}
 			return m, m.schedulePreview()
@@ -591,11 +620,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			// Index mode owns the digits while it is active, so an out-of-range
 			// one is swallowed rather than filtering the list.
-			if name, handled := m.indexJump(msg.String()); handled {
-				if name == "" {
+			if session, handled := m.indexJump(msg.String()); handled {
+				if session.Name == "" {
 					return m, nil
 				}
-				m.chosen = name
+				m.chosen = session
 				return m, tea.Quit
 			}
 		}
@@ -697,7 +726,7 @@ func (m *Model) aliasMatch(raw string) (sessionItem, bool) {
 // configItem builds the row for a [[session]] that isn't in the loaded list.
 // Only its name is known, so the icon is resolved from the name alone.
 func (m *Model) configItem(name string) sessionItem {
-	item := sessionItem{name: name, searchName: name, src: "config"}
+	item := sessionItem{session: model.SeshSession{Src: "config", Name: name}, name: name, searchName: name, src: "config"}
 	if m.iconFunc != nil {
 		item.icon = m.iconFunc(model.SeshSession{Src: "config", Name: name})
 	}
@@ -791,17 +820,17 @@ func (m *Model) indexFilterQuery(raw string) (string, bool) {
 // a digit past the end of the list is a no-op rather than a literal in the
 // filter. Digits are counted against the visible list, so the numbering stays
 // meaningful when a query narrowed it.
-func (m Model) indexJump(key string) (string, bool) {
+func (m Model) indexJump(key string) (model.SeshSession, bool) {
 	if _, ok := m.indexFilterQuery(m.filterInput.Value()); !ok {
-		return "", false
+		return model.SeshSession{}, false
 	}
 	if len(key) != 1 || key[0] < '1' || key[0] > '9' {
-		return "", false
+		return model.SeshSession{}, false
 	}
 	if n := int(key[0] - '0'); n <= len(m.filtered) {
-		return m.filtered[n-1].item.name, true
+		return m.filtered[n-1].item.session, true
 	}
-	return "", true
+	return model.SeshSession{}, true
 }
 
 func (m *Model) applyFilter() {
@@ -1331,7 +1360,9 @@ func highlightMatches(s string, indexes []int, matchStyle, normalStyle lipgloss.
 	return result.String()
 }
 
-func (m Model) Chosen() string { return m.chosen }
-func (m Model) Quit() bool     { return m.quit }
-func (m Model) LoadErr() error { return m.loadErr }
-func (m Model) Loading() bool  { return m.loading }
+// Chosen is the display name; action handoffs use ChosenSession instead.
+func (m Model) Chosen() string                   { return m.chosen.Name }
+func (m Model) ChosenSession() model.SeshSession { return m.chosen }
+func (m Model) Quit() bool                       { return m.quit }
+func (m Model) LoadErr() error                   { return m.loadErr }
+func (m Model) Loading() bool                    { return m.loading }

@@ -147,12 +147,12 @@ func TestSSHIntegrationListHandoffAndCache(t *testing.T) {
 	assert.NotContains(t, stored.Sessions.Directory, "ssh:"+selected)
 
 	pk := picker.NewMockPicker(t)
-	pk.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, _ picker.PickerOptions) (string, error) {
+	pk.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, _ picker.PickerOptions) (model.SeshSession, error) {
 		sessions, err := fetch()
 		require.NoError(t, err)
 		assert.Equal(t, []string{"tmux:" + integrationUserCollision, "config:alias-target", "ssh:" + selected}, sessions.OrderedIndex)
 		assert.NotContains(t, sessions.Directory, "tmux:renamed-bridge")
-		return sessions.Directory["ssh:"+selected].Name, nil
+		return sessions.Directory["ssh:"+selected], nil
 	}).Once()
 	deps.Picker = pk
 	require.NoError(t, newPickerCommand(&deps.BaseDeps, build).ExecuteContext(t.Context()))

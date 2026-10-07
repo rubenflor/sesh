@@ -116,11 +116,11 @@ func newPickerCommand(base *BaseDeps, build func(*cobra.Command, *BaseDeps) (*De
 				return err
 			}
 
-			if chosen == "" {
+			if chosen.Name == "" {
 				return nil
 			}
 
-			if _, err := deps.Connector.Connect(chosen, model.ConnectOpts{}); err != nil {
+			if _, err := deps.Connector.ConnectSession(chosen, model.ConnectOpts{}); err != nil {
 				return err
 			}
 
