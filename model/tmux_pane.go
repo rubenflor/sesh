@@ -10,5 +10,6 @@ type TmuxPane struct {
 	PaneID            string
 	SessionID         string
 	WindowID          string
+	ServerGeneration  string
 	SSHBridgeIdentity string
 }

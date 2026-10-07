@@ -11,14 +11,15 @@ import (
 )
 
 func TestListTmuxPanesPreservesOwningSessionMetadata(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
 	mockShell := shell.NewMockShell(t)
 	mockShell.EXPECT().ListCmd("custom-tmux", "list-panes", "-s", "-F",
-		"#{window_index}::#{window_name}::#{pane_index}::#{pane_title}::#{pane_current_command}::#{pane_current_path}::#{pane_id}::#{session_id}::#{window_id}").Return(
+		"#{window_index}::#{window_name}::#{pane_index}::#{pane_title}::#{pane_current_command}::#{pane_current_path}::#{pane_id}::#{session_id}::#{window_id}::"+serverGenerationFormat).Return(
 		[]string{
-			"0::editor::1::local editor::vim::/p/repo::%1::$1::@1",
-			"0::remote::0::bridge::ssh::/p/bridge::%2::$2::@2",
-			"0::editor::2::local shell::zsh::/p/repo::%3::$1::@1",
-			"0::remote::1::bridge shell::ssh::/p/bridge::%4::$2::@2",
+			"0::editor::1::local editor::vim::/p/repo::%1::$1::@1::" + generation,
+			"0::remote::0::bridge::ssh::/p/bridge::%2::$2::@2::" + generation,
+			"0::editor::2::local shell::zsh::/p/repo::%3::$1::@1::" + generation,
+			"0::remote::1::bridge shell::ssh::/p/bridge::%4::$2::@2::" + generation,
 			"malformed",
 		}, nil).Once()
 	mockShell.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$1", "--", "SESH_SSH_IDENTITY").Return("-SESH_SSH_IDENTITY", nil).Once()
@@ -28,10 +29,10 @@ func TestListTmuxPanesPreservesOwningSessionMetadata(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, []*model.TmuxPane{
-		{WindowIndex: 0, WindowName: "editor", PaneIndex: 1, PaneTitle: "local editor", PaneCommand: "vim", PanePath: "/p/repo", PaneID: "%1", SessionID: "$1", WindowID: "@1"},
-		{WindowIndex: 0, WindowName: "remote", PaneIndex: 0, PaneTitle: "bridge", PaneCommand: "ssh", PanePath: "/p/bridge", PaneID: "%2", SessionID: "$2", WindowID: "@2", SSHBridgeIdentity: "ssh/host/work"},
-		{WindowIndex: 0, WindowName: "editor", PaneIndex: 2, PaneTitle: "local shell", PaneCommand: "zsh", PanePath: "/p/repo", PaneID: "%3", SessionID: "$1", WindowID: "@1"},
-		{WindowIndex: 0, WindowName: "remote", PaneIndex: 1, PaneTitle: "bridge shell", PaneCommand: "ssh", PanePath: "/p/bridge", PaneID: "%4", SessionID: "$2", WindowID: "@2", SSHBridgeIdentity: "ssh/host/work"},
+		{WindowIndex: 0, WindowName: "editor", PaneIndex: 1, PaneTitle: "local editor", PaneCommand: "vim", PanePath: "/p/repo", PaneID: "%1", SessionID: "$1", WindowID: "@1", ServerGeneration: generation},
+		{WindowIndex: 0, WindowName: "remote", PaneIndex: 0, PaneTitle: "bridge", PaneCommand: "ssh", PanePath: "/p/bridge", PaneID: "%2", SessionID: "$2", WindowID: "@2", ServerGeneration: generation, SSHBridgeIdentity: "ssh/host/work"},
+		{WindowIndex: 0, WindowName: "editor", PaneIndex: 2, PaneTitle: "local shell", PaneCommand: "zsh", PanePath: "/p/repo", PaneID: "%3", SessionID: "$1", WindowID: "@1", ServerGeneration: generation},
+		{WindowIndex: 0, WindowName: "remote", PaneIndex: 1, PaneTitle: "bridge shell", PaneCommand: "ssh", PanePath: "/p/bridge", PaneID: "%4", SessionID: "$2", WindowID: "@2", ServerGeneration: generation, SSHBridgeIdentity: "ssh/host/work"},
 	}, panes)
 }
 
@@ -39,7 +40,7 @@ func TestListTmuxPanesPropagatesBridgeMarkerFailure(t *testing.T) {
 	mockShell := shell.NewMockShell(t)
 	wantErr := errors.New("session environment unavailable")
 	mockShell.EXPECT().ListCmd("custom-tmux", "list-panes", "-s", "-F",
-		"#{window_index}::#{window_name}::#{pane_index}::#{pane_title}::#{pane_current_command}::#{pane_current_path}::#{pane_id}::#{session_id}::#{window_id}").Return(
+		"#{window_index}::#{window_name}::#{pane_index}::#{pane_title}::#{pane_current_command}::#{pane_current_path}::#{pane_id}::#{session_id}::#{window_id}::"+serverGenerationFormat).Return(
 		[]string{"0::editor::1::local editor::vim::/p/repo::%1::$1::@1"}, nil).Once()
 	mockShell.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$1", "--", "SESH_SSH_IDENTITY").Return("", wantErr).Once()
 
@@ -51,25 +52,23 @@ func TestListTmuxPanesPropagatesBridgeMarkerFailure(t *testing.T) {
 }
 
 func TestSelectPaneUsesVerifiedIDs(t *testing.T) {
-	for _, fail := range []string{"", "select-window", "select-pane"} {
-		t.Run("failure="+fail, func(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "selection error"}[fail], func(t *testing.T) {
 			mockShell := shell.NewMockShell(t)
-			pane := &model.TmuxPane{SessionID: "$1", WindowID: "@3", PaneID: "%5", WindowIndex: 1, PaneIndex: 1}
+			pane := &model.TmuxPane{SessionID: "$1", WindowID: "@3", PaneID: "%7", ServerGeneration: "101:1700000000:/tmp/tmux-fixture", WindowIndex: 1, PaneIndex: 1, WindowName: "mutable", PaneTitle: "changed"}
 			wantErr := errors.New("selection failed")
-			var windowErr, paneErr error
-			if fail == "select-window" {
-				windowErr = wantErr
-			} else if fail == "select-pane" {
-				paneErr = wantErr
+			var selectionErr error
+			if fail {
+				selectionErr = wantErr
 			}
-			mockShell.EXPECT().Cmd("custom-tmux", "select-window", "-t", "$1:@3").Return("", windowErr).Once()
-			if windowErr == nil {
-				mockShell.EXPECT().Cmd("custom-tmux", "select-pane", "-t", "%5").Return("", paneErr).Once()
-			}
+			condition, err := sessionIdentityCondition(pane.SessionID, pane.ServerGeneration)
+			require.NoError(t, err)
+			mockShell.EXPECT().CmdCapture("custom-tmux", "if-shell", "-F", "-t", "$1:@3.%7", condition,
+				"select-pane -t '$1:@3.%7' ; select-window -t '$1:@3'", "if-shell").Return("", selectionErr).Once()
 
 			message, err := NewTmux(nil, mockShell, "custom-tmux").SelectPane(pane)
 
-			if fail != "" {
+			if fail {
 				require.ErrorIs(t, err, wantErr)
 				require.Empty(t, message)
 			} else {
@@ -82,13 +81,48 @@ func TestSelectPaneUsesVerifiedIDs(t *testing.T) {
 
 func TestSelectPaneRejectsMissingIDs(t *testing.T) {
 	for _, pane := range []*model.TmuxPane{
+		nil,
 		{WindowID: "@3", PaneID: "%5"},
 		{SessionID: "$1", PaneID: "%5"},
 		{SessionID: "$1", WindowID: "@3"},
+		{SessionID: "$1", WindowID: "window-name", PaneID: "%7"},
+		{SessionID: "$1", WindowID: "@3", PaneID: "pane-title"},
 	} {
 		message, err := NewTmux(nil, nil, "custom-tmux").SelectPane(pane)
 		require.EqualError(t, err, "pane has no server-assigned session, window or pane ID")
 		require.Empty(t, message)
+	}
+}
+
+func TestSelectPaneRejectsUnverifiedGeneration(t *testing.T) {
+	for _, generation := range []string{"", "unknown", "101:0:/tmp/tmux-fixture"} {
+		pane := &model.TmuxPane{SessionID: "$1", WindowID: "@3", PaneID: "%7", ServerGeneration: generation}
+		message, err := NewTmux(nil, nil, "custom-tmux").SelectPane(pane)
+		require.Error(t, err)
+		require.Empty(t, message)
+	}
+}
+
+func TestParseTmuxPanesScopesIdentityToGeneration(t *testing.T) {
+	const row = "0::code::1::editor::vim::/original::%7::$1::@3"
+	for _, generation := range []string{"", "unknown", "101:0:/tmp/tmux-fixture", "101:1700000000:/tmp/socket::suffix"} {
+		t.Run(generation, func(t *testing.T) {
+			input := row
+			if generation != "" {
+				input += "::" + generation
+			}
+			panes, err := parseTmuxPanesOutput([]string{input})
+			require.NoError(t, err)
+			require.Len(t, panes, 1)
+			require.Equal(t, "$1", panes[0].SessionID)
+			require.Equal(t, "@3", panes[0].WindowID)
+			require.Equal(t, "%7", panes[0].PaneID)
+			if generation == "101:1700000000:/tmp/socket::suffix" {
+				require.Equal(t, generation, panes[0].ServerGeneration)
+			} else {
+				require.Empty(t, panes[0].ServerGeneration, "legacy/unsupported metadata cannot authorize ID reuse")
+			}
+		})
 	}
 }
 

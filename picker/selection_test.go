@@ -19,6 +19,10 @@ func TestPickerSelectionRetainsRow(t *testing.T) {
 				row := model.SeshSession{Src: src, Name: "work", Path: "/work"}
 				if src == "tmux" {
 					row.TmuxSessionID, row.TmuxServerGeneration = "$1", testServerGeneration
+				} else if src == "tmux-pane" {
+					row.Name = "code/editor"
+					row.TmuxSessionID, row.TmuxServerGeneration = "$1", testServerGeneration
+					row.TmuxWindowID, row.TmuxPaneID = "@3", "%7"
 				} else if src == "ssh" {
 					row.Name, row.Path = "ssh/host/work", ""
 				}

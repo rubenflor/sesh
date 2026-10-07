@@ -7,6 +7,7 @@ import (
 
 	"github.com/joshmedeski/sesh/v2/convert"
 	"github.com/joshmedeski/sesh/v2/model"
+	"github.com/joshmedeski/sesh/v2/shell"
 )
 
 func listpanesformat() string {
@@ -20,6 +21,7 @@ func listpanesformat() string {
 		"#{pane_id}",
 		"#{session_id}",
 		"#{window_id}",
+		serverGenerationFormat,
 	}
 	return strings.Join(variables, separator)
 }
@@ -51,11 +53,11 @@ func (t *RealTmux) ListTmuxPanes() ([]*model.TmuxPane, error) {
 func parseTmuxPanesOutput(rawList []string) ([]*model.TmuxPane, error) {
 	panes := make([]*model.TmuxPane, 0, len(rawList))
 	for _, line := range rawList {
-		fields := strings.Split(line, separator)
-		if len(fields) != 9 {
+		fields := strings.SplitN(line, separator, 10)
+		if len(fields) != 9 && len(fields) != 10 {
 			continue
 		}
-		panes = append(panes, &model.TmuxPane{
+		pane := &model.TmuxPane{
 			WindowIndex: convert.StringToInt(fields[0]),
 			WindowName:  fields[1],
 			PaneIndex:   convert.StringToInt(fields[2]),
@@ -65,22 +67,29 @@ func parseTmuxPanesOutput(rawList []string) ([]*model.TmuxPane, error) {
 			PaneID:      fields[6],
 			SessionID:   fields[7],
 			WindowID:    fields[8],
-		})
+		}
+		if len(fields) == 10 && validServerGeneration(fields[9]) {
+			pane.ServerGeneration = fields[9]
+		}
+		panes = append(panes, pane)
 	}
 	return panes, nil
 }
 
 func (t *RealTmux) SelectPane(pane *model.TmuxPane) (string, error) {
-	if pane.SessionID == "" || pane.WindowID == "" || pane.PaneID == "" {
+	if pane == nil || pane.SessionID == "" || !strings.HasPrefix(pane.WindowID, "@") || !strings.HasPrefix(pane.PaneID, "%") {
 		return "", fmt.Errorf("pane has no server-assigned session, window or pane ID")
 	}
-
-	// Keep the verified owning session when selecting its window; display names
-	// and numeric indexes are not operation targets.
-	if _, err := t.shell.Cmd(t.bin, "select-window", "-t", pane.SessionID+":"+pane.WindowID); err != nil {
-		return "", fmt.Errorf("failed to select window %d: %w", pane.WindowIndex, err)
+	condition, err := sessionIdentityCondition(pane.SessionID, pane.ServerGeneration)
+	if err != nil {
+		return "", err
 	}
-	if _, err := t.shell.Cmd(t.bin, "select-pane", "-t", pane.PaneID); err != nil {
+	// if-shell permits an unresolved target. Strict pane selection must validate
+	// the full tuple before changing window focus; an error skips window selection.
+	windowTarget := pane.SessionID + ":" + pane.WindowID
+	paneTarget := windowTarget + "." + pane.PaneID
+	command := "select-pane -t " + shell.Quote(paneTarget) + " ; select-window -t " + shell.Quote(windowTarget)
+	if _, err := t.shell.CmdCapture(t.bin, "if-shell", "-F", "-t", paneTarget, condition, command, "if-shell"); err != nil {
 		return "", fmt.Errorf("failed to select pane %d in window %d: %w", pane.PaneIndex, pane.WindowIndex, err)
 	}
 	return fmt.Sprintf("selected pane %d in window %d", pane.PaneIndex, pane.WindowIndex), nil

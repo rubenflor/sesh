@@ -56,9 +56,13 @@ func listTmuxPanes(l *RealLister) (model.SeshSessions, error) {
 		key := tmuxPaneKey(entry.pane.WindowName, entry.pane.PaneID)
 		orderedIndex = append(orderedIndex, key)
 		directory[key] = model.SeshSession{
-			Src:  "tmux-pane",
-			Name: name,
-			Path: entry.pane.PanePath,
+			Src:                  "tmux-pane",
+			Name:                 name,
+			Path:                 entry.pane.PanePath,
+			TmuxSessionID:        entry.pane.SessionID,
+			TmuxWindowID:         entry.pane.WindowID,
+			TmuxPaneID:           entry.pane.PaneID,
+			TmuxServerGeneration: entry.pane.ServerGeneration,
 		}
 	}
 

@@ -15,12 +15,12 @@ import (
 func TestResolveLocalPane(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
 	mLister := lister.NewMockLister(t)
-	session := model.SeshSession{Src: "tmux-pane", Name: "code/1", Path: "/p/repo"}
+	session := model.SeshSession{Src: "tmux-pane", Name: "code/1", Path: "/p/repo", TmuxSessionID: "$1", TmuxWindowID: "@3", TmuxPaneID: "%7", TmuxServerGeneration: existingSessionGeneration}
 	mTmux.EXPECT().IsAttached().Return(true).Once()
 	mLister.EXPECT().ListTmuxPanes().Return(model.SeshSessions{
-		OrderedIndex: []string{"tmux-pane:code/%3"},
+		OrderedIndex: []string{"tmux-pane:code/%7"},
 		Directory: map[string]model.SeshSession{
-			"tmux-pane:code/%3": session,
+			"tmux-pane:code/%7": session,
 		},
 	}, nil).Once()
 	c := &RealConnector{tmux: mTmux, lister: mLister}

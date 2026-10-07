@@ -70,7 +70,7 @@ func TestPickerConnectRetainsSelectedIdentity(t *testing.T) {
 }
 
 func TestPickerNonTmuxConnectKeepsNameResolution(t *testing.T) {
-	for _, src := range []string{"zoxide", "dir", "config", "config_wildcard", "tmuxinator", "tmux-pane", "other"} {
+	for _, src := range []string{"zoxide", "dir", "config", "config_wildcard", "tmuxinator", "other"} {
 		t.Run(src, func(t *testing.T) {
 			// Non-local rows still resolve their name through the normal connector.
 			pk := picker.NewMockPicker(t)
@@ -89,4 +89,28 @@ func TestPickerNonTmuxConnectKeepsNameResolution(t *testing.T) {
 			require.NoError(t, cmd.ExecuteContext(t.Context()))
 		})
 	}
+}
+
+func TestPickerPaneConnectRetainsSelectedIdentity(t *testing.T) {
+	row := model.SeshSession{
+		Src: "tmux-pane", Name: "code/editor", Path: "/original",
+		TmuxSessionID: "$1", TmuxWindowID: "@3", TmuxPaneID: "%7", TmuxServerGeneration: existingGeneration,
+	}
+	pk := picker.NewMockPicker(t)
+	pk.EXPECT().Pick(mock.Anything, mock.Anything).Return(row, nil).Once()
+	tm := tmux.NewMockTmux(t)
+	tm.EXPECT().ListSessions().Return([]*model.TmuxSession{{ID: "$1", Name: "renamed", ServerGeneration: existingGeneration}}, nil).Once()
+	original := &model.TmuxPane{
+		SessionID: "$1", WindowID: "@3", PaneID: "%7", ServerGeneration: existingGeneration,
+		WindowName: "renamed", PaneTitle: "changed", PanePath: "/changed",
+	}
+	tm.EXPECT().ListTmuxPanes().Return([]*model.TmuxPane{original,
+		{SessionID: "$1", WindowID: "@4", PaneID: "%8", ServerGeneration: existingGeneration, WindowName: "code", PaneTitle: "editor", PanePath: row.Path},
+	}, nil).Once()
+	tm.EXPECT().SelectPane(original).Return("selected original", nil).Once()
+	// Empty lister and zoxide mocks reject any name fallback or new side effect.
+	c := connector.NewConnector(model.Config{}, nil, nil, lister.NewMockLister(t), nil, nil, tm, zoxide.NewMockZoxide(t), nil, nil)
+	deps := &Deps{Picker: pk, Connector: c}
+	cmd := newPickerCommand(nil, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
 }

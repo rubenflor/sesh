@@ -44,6 +44,9 @@ func (c *RealConnector) Resolve(name string) (model.Connection, error) {
 // ConnectSession consumes picker rows without resolving a local display name.
 // Other sources retain their existing name-based connection behavior.
 func (c *RealConnector) ConnectSession(session model.SeshSession, opts model.ConnectOpts) (string, error) {
+	if session.Src == "tmux-pane" {
+		return connectToTmuxPane(c, model.Connection{Session: session}, opts)
+	}
 	if session.Src != "tmux" {
 		return c.Connect(session.Name, opts)
 	}

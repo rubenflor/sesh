@@ -45,8 +45,8 @@ func TestListTmuxPanes(t *testing.T) {
 		require.Equal(t, model.SeshSessions{
 			OrderedIndex: []string{"tmux-pane:editor/%1", "tmux-pane:sesh-ssh-user/%3"},
 			Directory: map[string]model.SeshSession{
-				"tmux-pane:editor/%1":        {Src: "tmux-pane", Name: "editor/zsh", Path: "/p/repo"},
-				"tmux-pane:sesh-ssh-user/%3": {Src: "tmux-pane", Name: "sesh-ssh-user/zsh", Path: "/p/user"},
+				"tmux-pane:editor/%1":        {Src: "tmux-pane", Name: "editor/zsh", Path: "/p/repo", TmuxSessionID: "$1", TmuxPaneID: "%1"},
+				"tmux-pane:sesh-ssh-user/%3": {Src: "tmux-pane", Name: "sesh-ssh-user/zsh", Path: "/p/user", TmuxSessionID: "$3", TmuxPaneID: "%3"},
 			},
 		}, sessions)
 	})
@@ -132,4 +132,25 @@ func TestListTmuxPanes(t *testing.T) {
 		assert.NotNil(t, err)
 		assert.Contains(t, err.Error(), "couldn't list tmux panes")
 	})
+}
+
+func TestListTmuxPanesPreservesSelectedIdentity(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
+	m := tmux.NewMockTmux(t)
+	pane := &model.TmuxPane{
+		SessionID: "$1", WindowID: "@3", PaneID: "%7", ServerGeneration: generation,
+		WindowName: "code", PaneTitle: "editor", PanePath: "/original",
+	}
+	m.EXPECT().ListTmuxPanes().Return([]*model.TmuxPane{pane}, nil).Once()
+	li := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
+	sessions, err := li.ListTmuxPanes()
+	require.NoError(t, err)
+	selected := sessions.Directory[sessions.OrderedIndex[0]]
+	// Inventory pointers and later display changes cannot mutate the selection.
+	pane.SessionID, pane.WindowID, pane.PaneID, pane.ServerGeneration = "$2", "@4", "%8", "changed"
+	pane.WindowName, pane.PaneTitle, pane.PanePath = "renamed", "changed", "/changed"
+	require.Equal(t, model.SeshSession{
+		Src: "tmux-pane", Name: "code/editor", Path: "/original",
+		TmuxSessionID: "$1", TmuxWindowID: "@3", TmuxPaneID: "%7", TmuxServerGeneration: generation,
+	}, selected)
 }

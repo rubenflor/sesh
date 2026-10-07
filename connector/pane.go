@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/joshmedeski/sesh/v2/model"
+	"github.com/joshmedeski/sesh/v2/tmux"
 )
 
 func isTmuxPaneFormat(name string) bool {
@@ -37,30 +38,20 @@ func tmuxPaneStrategy(c *RealConnector, name string) (model.Connection, error) {
 }
 
 func connectToTmuxPane(c *RealConnector, connection model.Connection, _ model.ConnectOpts) (string, error) {
+	selected := connection.Session
+	if selected.TmuxWindowID == "" || selected.TmuxPaneID == "" {
+		return "", fmt.Errorf("pane %q has no server-assigned window or pane ID", selected.Name)
+	}
+	if _, err := tmux.VerifyLocalSession(c.tmux, selected.TmuxSessionID, selected.TmuxServerGeneration); err != nil {
+		return "", err
+	}
 	panes, err := c.tmux.ListTmuxPanes()
 	if err != nil {
 		return "", err
 	}
-
-	sessions, err := c.lister.ListTmuxPanes()
-	if err != nil {
-		return "", err
-	}
-
-	var targetPaneKey string
-	for _, key := range sessions.OrderedIndex {
-		if sessions.Directory[key].Name == connection.Session.Name {
-			targetPaneKey = key
-			break
-		}
-	}
-
 	for _, pane := range panes {
-		if pane.SSHBridgeIdentity != "" {
-			continue
-		}
-		paneKey := fmt.Sprintf("tmux-pane:%s/%s", pane.WindowName, pane.PaneID)
-		if paneKey == targetPaneKey {
+		if pane.SessionID == selected.TmuxSessionID && pane.WindowID == selected.TmuxWindowID &&
+			pane.PaneID == selected.TmuxPaneID && pane.ServerGeneration == selected.TmuxServerGeneration && pane.SSHBridgeIdentity == "" {
 			return c.tmux.SelectPane(pane)
 		}
 	}

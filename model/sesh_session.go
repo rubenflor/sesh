@@ -23,6 +23,9 @@ type (
 		TmuxSessionID string `json:"-"`
 		// TmuxServerGeneration scopes the ID to the server lifetime that issued it.
 		TmuxServerGeneration string `json:"-"`
+		// Pane rows retain the selected window and pane alongside their session.
+		TmuxWindowID string `json:"-"`
+		TmuxPaneID   string `json:"-"`
 
 		StartupCommand        string         // The command to run when the session is started
 		PreviewCommand        string         // The command to run when the session is previewed
