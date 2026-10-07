@@ -178,13 +178,13 @@ func TestSSHBridgePropagatesTmuxFailures(t *testing.T) {
 				mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "user", ID: "$1"}}, nil).Once()
 				mTmux.EXPECT().GetSessionEnvironment("$1", "SESH_SSH_IDENTITY").Return("", wantErr).Once()
 			case "pane", "kill":
-				mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "bridge", ID: "$8"}}, nil).Once()
+				mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "bridge", ID: "$8", ServerGeneration: "101:1700000000:/tmp/bridge"}}, nil).Once()
 				mTmux.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return("ssh/host/0", nil).Once()
 				if stage == "pane" {
 					mTmux.EXPECT().IsPaneDead("$8").Return(false, wantErr).Once()
 				} else {
 					mTmux.EXPECT().IsPaneDead("$8").Return(true, nil).Once()
-					mTmux.EXPECT().KillSession("$8").Return("", wantErr).Once()
+					mTmux.EXPECT().KillSessionInGeneration("$8", "101:1700000000:/tmp/bridge").Return("", wantErr).Once()
 				}
 			case "create":
 				mTmux.EXPECT().ListSessions().Return(nil, nil).Once()
@@ -216,15 +216,16 @@ func TestSSHBridgeRejectsInvalidIdentityBeforeLookup(t *testing.T) {
 }
 
 func TestSSHBridgeReplacesDeadExactMarker(t *testing.T) {
+	const generation = "101:1700000000:/tmp/bridge"
 	m := tmux.NewMockTmux(t)
 	m.EXPECT().ListSessions().Return([]*model.TmuxSession{
 		{Name: "sesh-ssh-71733fb26ad99c67e0bf6bbe-0", ID: "$1"},
-		{Name: "renamed dead bridge", ID: "$8"},
+		{Name: "renamed dead bridge", ID: "$8", ServerGeneration: generation},
 	}, nil).Once()
 	m.EXPECT().GetSessionEnvironment("$1", model.SSHBridgeIdentityEnv).Return("", nil).Once()
 	marker := m.EXPECT().GetSessionEnvironment("$8", model.SSHBridgeIdentityEnv).Return("ssh/host/0", nil).Once()
 	dead := m.EXPECT().IsPaneDead("$8").Return(true, nil).Once().NotBefore(marker)
-	kill := m.EXPECT().KillSession("$8").Return("", nil).Once().NotBefore(dead)
+	kill := m.EXPECT().KillSessionInGeneration("$8", generation).Return("", nil).Once().NotBefore(dead)
 	m.EXPECT().NewSessionWithCommand(model.TmuxSessionOpts{
 		Name:           "sesh-ssh-71733fb26ad99c67e0bf6bbe-1",
 		Command:        `exec ssh -tt -- 'host' 'tmux attach-session -t '\''=0'\'''`,
@@ -236,4 +237,30 @@ func TestSSHBridgeReplacesDeadExactMarker(t *testing.T) {
 	name, err := c.ensureSSHBridge("ssh/host/0")
 	require.NoError(t, err)
 	assert.Equal(t, "$8", name)
+}
+
+func TestSSHBridgeCleanupFailsClosed(t *testing.T) {
+	for _, generation := range []string{"", "invalid", "101:1700000000:/tmp/old-server"} {
+		t.Run(generation, func(t *testing.T) {
+			wantErr := errors.New("unverified or stale tmux server generation")
+			m := tmux.NewMockTmux(t)
+			m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+				{Name: "renamed dead bridge", ID: "$1", ServerGeneration: generation},
+			}, nil).Once()
+			marker := m.EXPECT().GetSessionEnvironment("$1", model.SSHBridgeIdentityEnv).
+				Return("ssh/host/0", nil).Once()
+			dead := m.EXPECT().IsPaneDead("$1").Return(true, nil).Once().NotBefore(marker)
+			m.EXPECT().KillSessionInGeneration("$1", generation).
+				Return("", wantErr).Once().NotBefore(dead)
+			c := &RealConnector{tmux: m}
+
+			id, err := c.ensureSSHBridge("ssh/host/0")
+
+			require.ErrorIs(t, err, wantErr)
+			require.ErrorContains(t, err, "failed to remove stale SSH bridge")
+			require.Empty(t, id)
+			m.AssertNumberOfCalls(t, "KillSession", 0)
+			m.AssertNumberOfCalls(t, "NewSessionWithCommand", 0)
+		})
+	}
 }

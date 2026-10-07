@@ -112,7 +112,7 @@ func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {
 			if !dead {
 				return session.ID, nil
 			}
-			if _, err := c.tmux.KillSession(session.ID); err != nil {
+			if _, err := c.tmux.KillSessionInGeneration(session.ID, session.ServerGeneration); err != nil {
 				return "", fmt.Errorf("failed to remove stale SSH bridge %q: %w", session.Name, err)
 			}
 			delete(occupied, session.Name)
