@@ -87,9 +87,9 @@ func (t *RealTmux) ResolveClient() string {
 	return client
 }
 
-// resolveClient distinguishes intentional calling-pane resolution from an
-// unavailable client. ResolveClient retains its switch/attach fallback contract;
-// focused path consumers use this result to fail closed instead.
+// resolveClient retains ResolveClient's switch/attach fallback contract.
+// Focused path consumers resolve the calling pane explicitly before using
+// client selection outside tmux.
 func (t *RealTmux) resolveClient() (client string, callingPane bool, err error) {
 	if client := t.os.Getenv(seshClientEnv); client != "" {
 		slog.Debug("tmux: client named by env", "client", client, "env", seshClientEnv)
@@ -133,21 +133,23 @@ func (t *RealTmux) resolveClient() (client string, callingPane bool, err error) 
 // the calling pane's session inside tmux, or the resolved client's session
 // from outside it.
 func (t *RealTmux) FocusedSessionPath() (string, error) {
-	session, err := t.resolvedClientSession()
+	target, err := t.focusedTarget()
 	if err != nil {
 		return "", err
 	}
-	args := []string{"display-message", "-p"}
-	if session != "" {
-		args = append(args, "-t", session+":")
-	}
-	id, err := t.shell.Cmd(t.bin, append(args, "#{session_id}")...)
+	format := "#{session_id}" + separator + serverGenerationFormat
+	identity, err := t.shell.Cmd(t.bin, "display-message", "-p", "-t", target, format)
 	if err != nil {
 		return "", err
 	}
-	number, ok := strings.CutPrefix(id, "$")
-	if _, err := strconv.ParseUint(number, 10, 64); !ok || err != nil {
-		return "", fmt.Errorf("focused tmux session has no valid server-assigned ID")
+	id, generation, found := strings.Cut(identity, separator)
+	digits, hasPrefix := strings.CutPrefix(id, "$")
+	number, idErr := strconv.ParseUint(digits, 10, 64)
+	if !found || !hasPrefix || idErr != nil || strconv.FormatUint(number, 10) != digits || !validServerGeneration(generation) {
+		return "", fmt.Errorf("focused tmux session has no valid server-assigned identity")
+	}
+	if strings.HasSuffix(target, ":") && target != id+":" {
+		return "", fmt.Errorf("focused tmux session identity changed")
 	}
 	marker, err := t.GetSessionEnvironment(id, model.SSHBridgeIdentityEnv)
 	if err != nil {
@@ -156,18 +158,34 @@ func (t *RealTmux) FocusedSessionPath() (string, error) {
 	if marker != "" {
 		return "", fmt.Errorf("focused tmux session is an SSH bridge; focus a local session to use local paths")
 	}
-	return t.shell.Cmd(t.bin, "display-message", "-p", "-t", id+":", "#{session_path}")
-}
-
-// An empty session with no error means tmux should resolve the calling pane.
-// Every unsuccessful selected-client lookup returns an error, never a fallback.
-func (t *RealTmux) resolvedClientSession() (string, error) {
-	client, callingPane, err := t.resolveClient()
+	// Keep the exact calling pane live through the path read, even if its
+	// session survives. Verify ownership's ID/generation in that same response.
+	output, err := t.shell.Cmd(t.bin, "display-message", "-p", "-t", target, format+separator+"#{session_path}")
 	if err != nil {
 		return "", err
 	}
-	if callingPane {
-		return "", nil
+	path, verified := strings.CutPrefix(output, identity+separator)
+	if !verified {
+		return "", fmt.Errorf("focused tmux session identity changed")
+	}
+	return path, nil
+}
+
+// focusedTarget returns only an explicit pane or session-ID target. An inside
+// caller without a valid pane is unavailable, never an outside-client fallback.
+func (t *RealTmux) focusedTarget() (string, error) {
+	if t.os.Getenv("TMUX") != "" {
+		pane := t.os.Getenv(tmuxPaneEnv)
+		digits, found := strings.CutPrefix(pane, "%")
+		number, err := strconv.ParseUint(digits, 10, 64)
+		if !found || err != nil || strconv.FormatUint(number, 10) != digits {
+			return "", fmt.Errorf("calling tmux pane is missing or has no valid server-assigned ID")
+		}
+		return pane, nil
+	}
+	client, _, err := t.resolveClient()
+	if err != nil {
+		return "", err
 	}
 	if client == "" {
 		return "", fmt.Errorf("no focused tmux client; attach a local client to use local paths")
@@ -181,7 +199,7 @@ func (t *RealTmux) resolvedClientSession() (string, error) {
 			if c.SessionID == "" {
 				return "", fmt.Errorf("focused tmux client %q has no session", client)
 			}
-			return c.SessionID, nil
+			return c.SessionID + ":", nil
 		}
 	}
 	return "", fmt.Errorf("focused tmux client %q is unavailable; select an attached local client", client)
