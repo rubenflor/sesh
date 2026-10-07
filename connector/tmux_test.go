@@ -102,7 +102,7 @@ func TestConnectToTmuxDetachedSwitchesClientAndFocuses(t *testing.T) {
 
 func TestConnectToTmuxDetachedWithNoClientStillFocuses(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
-	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "nutiliti/2345", ID: "$3"}}, nil).Once()
+	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "nutiliti/2345", ID: "$3", ServerGeneration: existingSessionGeneration}}, nil).Times(2)
 	mFocuser := focuser.NewMockFocuser(t)
 
 	// Nothing is attached to the server, so there is no client to switch.
@@ -117,7 +117,7 @@ func TestConnectToTmuxDetachedWithNoClientStillFocuses(t *testing.T) {
 
 	conn := model.Connection{
 		Found: true, New: false,
-		Session: model.SeshSession{Src: "tmux", Name: "nutiliti/2345", Path: "/repo/w/2345"},
+		Session: model.SeshSession{Src: "tmux", Name: "nutiliti/2345", Path: "/repo/w/2345", TmuxSessionID: "$3", TmuxServerGeneration: existingSessionGeneration},
 	}
 	msg, err := connectToTmux(c, conn, model.ConnectOpts{Switch: true})
 	require.NoError(t, err)
@@ -129,7 +129,7 @@ func TestConnectToTmuxDetachedWithNoClientStillFocuses(t *testing.T) {
 // nothing, and report success.
 func TestConnectToTmuxDetachedReportsUnreachableTmux(t *testing.T) {
 	mTmux := tmux.NewMockTmux(t)
-	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "nutiliti/2345", ID: "$3"}}, nil).Once()
+	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "nutiliti/2345", ID: "$3", ServerGeneration: existingSessionGeneration}}, nil).Once()
 	mFocuser := focuser.NewMockFocuser(t)
 
 	mTmux.EXPECT().IsAttached().Return(false)
@@ -143,7 +143,7 @@ func TestConnectToTmuxDetachedReportsUnreachableTmux(t *testing.T) {
 
 	conn := model.Connection{
 		Found: true, New: false,
-		Session: model.SeshSession{Src: "tmux", Name: "nutiliti/2345", Path: "/repo/w/2345"},
+		Session: model.SeshSession{Src: "tmux", Name: "nutiliti/2345", Path: "/repo/w/2345", TmuxSessionID: "$3", TmuxServerGeneration: existingSessionGeneration},
 	}
 	_, err := connectToTmux(c, conn, model.ConnectOpts{Switch: true})
 	require.ErrorContains(t, err, "couldn't reach tmux to switch to '$3'")

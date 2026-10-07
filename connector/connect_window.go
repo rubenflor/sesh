@@ -18,6 +18,10 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 	if err != nil {
 		return "", err
 	}
+	var generation []string
+	if session.TmuxSessionID != "" {
+		generation = []string{session.TmuxServerGeneration}
+	}
 
 	name, startDir := opts.Name, opts.Path
 	if startDir == "" {
@@ -33,7 +37,7 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 	}
 
 	if name != "" && !opts.New {
-		windows, err := c.tmux.ListWindows(sessionID)
+		windows, err := c.tmux.ListWindows(sessionID, generation...)
 		if err != nil {
 			return "", fmt.Errorf("failed to list windows in '%s': %w", session.Name, err)
 		}
@@ -44,7 +48,7 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 			// Target by index: a name shared with a session resolves
 			// ambiguously (see #280), an index never does.
 			target := fmt.Sprintf("%s:%d", sessionID, window.Index)
-			if _, err := c.reuseWindow(sessionID, target, opts); err != nil {
+			if _, err := c.reuseWindow(sessionID, target, opts, generation...); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("%s:%d", session.Name, window.Index), nil
@@ -57,7 +61,7 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 		TargetSession: sessionID,
 		Command:       opts.Command,
 		Background:    opts.Background,
-	})
+	}, generation...)
 	if err != nil {
 		return "", fmt.Errorf("failed to create window: %w", err)
 	}
@@ -65,7 +69,7 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 		return target, nil
 	}
 	// new-window already made it the session's active window.
-	if _, err := c.focusSession(sessionID, opts.Switch); err != nil {
+	if _, err := c.focusSession(sessionID, opts.Switch, generation...); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -74,19 +78,19 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 // reuseWindow drops a command into a window that already exists. The window
 // already has a running process, so the command goes in as keystrokes rather
 // than becoming the pane's process the way it does on create.
-func (c *RealConnector) reuseWindow(sessionName string, target string, opts model.WindowConnectOpts) (string, error) {
+func (c *RealConnector) reuseWindow(sessionName string, target string, opts model.WindowConnectOpts, serverGeneration ...string) (string, error) {
 	if opts.Command != "" {
-		if _, err := c.tmux.SendKeys(target, opts.Command); err != nil {
+		if _, err := c.tmux.SendKeys(target, opts.Command, serverGeneration...); err != nil {
 			return "", fmt.Errorf("failed to send command to '%s': %w", target, err)
 		}
 	}
 	if opts.Background {
 		return target, nil
 	}
-	if _, err := c.tmux.SelectWindow(target); err != nil {
+	if _, err := c.tmux.SelectWindow(target, serverGeneration...); err != nil {
 		return "", fmt.Errorf("failed to select window '%s': %w", target, err)
 	}
-	if _, err := c.focusSession(sessionName, opts.Switch); err != nil {
+	if _, err := c.focusSession(sessionName, opts.Switch, serverGeneration...); err != nil {
 		return "", err
 	}
 	return target, nil

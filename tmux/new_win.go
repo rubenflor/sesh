@@ -12,7 +12,7 @@ import (
 const windowTargetFormat = "#{session_name}:#{window_index}"
 
 // NewWindowInSession creates a window and returns its "session:index" target.
-func (t *RealTmux) NewWindowInSession(opts model.TmuxWindowOpts) (string, error) {
+func (t *RealTmux) NewWindowInSession(opts model.TmuxWindowOpts, serverGeneration ...string) (string, error) {
 	args := []string{"new-window", "-P", "-F", windowTargetFormat}
 	if opts.Name != "" {
 		args = append(args, "-n", opts.Name)
@@ -30,6 +30,6 @@ func (t *RealTmux) NewWindowInSession(opts model.TmuxWindowOpts) (string, error)
 	if opts.Command != "" {
 		args = append(args, "--", opts.Command)
 	}
-	target, err := t.shell.Cmd(t.bin, args...)
+	target, err := t.sessionCommand(t.bin, opts.TargetSession, serverGeneration, args...)
 	return strings.TrimSpace(target), err
 }

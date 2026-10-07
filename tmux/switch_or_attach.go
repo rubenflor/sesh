@@ -6,15 +6,15 @@ import (
 	"github.com/joshmedeski/sesh/v2/model"
 )
 
-func (t *RealTmux) SwitchOrAttach(name string, opts model.ConnectOpts) (string, error) {
+func (t *RealTmux) SwitchOrAttach(name string, opts model.ConnectOpts, serverGeneration ...string) (string, error) {
 	if opts.Switch || t.IsAttached() {
-		if _, err := t.switchClient(name); err != nil {
+		if _, err := t.switchClient(name, serverGeneration...); err != nil {
 			return "", fmt.Errorf("failed to switch to tmux session: %w", err)
 		} else {
 			return fmt.Sprintf("switching to tmux session: %s", name), nil
 		}
 	} else {
-		if _, err := t.AttachSession(name); err != nil {
+		if _, err := t.AttachSession(name, serverGeneration...); err != nil {
 			return "", fmt.Errorf("failed to attach to tmux session: %w", err)
 		} else {
 			return fmt.Sprintf("attaching to tmux session: %s", name), nil

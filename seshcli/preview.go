@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/joshmedeski/sesh/v2/previewer"
 )
 
 const previewClearScreen = "\033[2J\033[H"
@@ -86,7 +88,7 @@ func NewPreviewCommand(base *BaseDeps) *cobra.Command {
 				return errors.New("preview interval must be greater than zero")
 			}
 
-			_, sessionExists := deps.Lister.FindTmuxSession(deps.Icon.RemoveIcon(name))
+			session, sessionExists := deps.Lister.FindTmuxSession(deps.Icon.RemoveIcon(name))
 			if !sessionExists {
 				return writePreview(cmd.OutOrStdout(), deps.Previewer.Preview, name)
 			}
@@ -94,7 +96,10 @@ func NewPreviewCommand(base *BaseDeps) *cobra.Command {
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 
-			return watchPreview(cmd.Context(), cmd.OutOrStdout(), deps.Previewer.Preview, name, ticker.C)
+			preview := func(string) (string, error) {
+				return previewer.PreviewTmuxSession(deps.Tmux, session)
+			}
+			return watchPreview(cmd.Context(), cmd.OutOrStdout(), preview, name, ticker.C)
 		},
 	}
 

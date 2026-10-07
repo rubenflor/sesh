@@ -36,12 +36,11 @@ func TestCurrentSessionCallersUseVerifiedInventoryMetadata(t *testing.T) {
 			s.EXPECT().Cmd("tmux", "display-message", "-p", "-t", "$1:", identityFormat).Return("$1::"+generation, nil).Once()
 			inventoryReads := 1
 			if caller == "implicit window connect" {
-				// The later name handoff is ticket 36. Keep that separate read
-				// stable here to isolate which inventory row supplies the path.
+				// Revalidation retains the selected ID and its session root.
 				s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return(rows, nil).Once()
 				inventoryReads++
-				s.EXPECT().Cmd("tmux", "new-window", "-P", "-F", "#{session_name}:#{window_index}",
-					"-c", pathA, "-d", "-t", "$1:").Return("b:1", nil).Once()
+				s.EXPECT().CmdCapture("tmux", "if-shell", "-F", "-t", "$1:", mock.Anything,
+					"'new-window' '-P' '-F' '#{session_name}:#{window_index}' '-c' "+shell.Quote(pathA)+" '-d' '-t' '$1:'", "if-shell").Return("b:1", nil).Once()
 			}
 			s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).Return("", nil).Times(inventoryReads + 1)
 			s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).Return("", nil).Times(inventoryReads)

@@ -19,7 +19,7 @@ import (
 // window behaviour they care about.
 func windowConnector(t *testing.T) (*RealConnector, *tmux.MockTmux, *lister.MockLister, *dir.MockDir, *home.MockHome) {
 	mTmux := tmux.NewMockTmux(t)
-	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "second-brain", ID: "$9"}}, nil).Maybe()
+	mTmux.EXPECT().ListSessions().Return([]*model.TmuxSession{{Name: "second-brain", ID: "$9", ServerGeneration: existingSessionGeneration, Path: "/home/dev/brain"}}, nil).Maybe()
 	mLister := lister.NewMockLister(t)
 	mDir := dir.NewMockDir(t)
 	mHome := home.NewMockHome(t)
@@ -32,7 +32,7 @@ func windowConnector(t *testing.T) (*RealConnector, *tmux.MockTmux, *lister.Mock
 }
 
 func attachedTo(mLister *lister.MockLister, name string, path string) {
-	mLister.EXPECT().GetAttachedTmuxSession().Return(model.SeshSession{Name: name, Path: path}, true)
+	mLister.EXPECT().GetAttachedTmuxSession().Return(model.SeshSession{Name: name, Path: path, TmuxSessionID: "$9", TmuxServerGeneration: existingSessionGeneration}, true)
 }
 
 // notADirectory keeps a plain window name from being read as a path.
@@ -46,13 +46,13 @@ func TestConnectWindow(t *testing.T) {
 		c, mTmux, mLister, mDir, mHome := windowConnector(t)
 		attachedTo(mLister, "second-brain", "/home/dev/brain")
 		notADirectory(mHome, mDir, "notes")
-		mTmux.EXPECT().ListWindows("$9").Return([]*model.TmuxWindow{
+		mTmux.EXPECT().ListWindows("$9", existingSessionGeneration).Return([]*model.TmuxWindow{
 			{Name: "shell", Index: 1},
 			{Name: "notes", Index: 4},
 		}, nil)
-		mTmux.EXPECT().SendKeys("$9:4", "claude").Return("", nil)
-		mTmux.EXPECT().SelectWindow("$9:4").Return("", nil)
-		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}).Return("", nil)
+		mTmux.EXPECT().SendKeys("$9:4", "claude", existingSessionGeneration).Return("", nil)
+		mTmux.EXPECT().SelectWindow("$9:4", existingSessionGeneration).Return("", nil)
+		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}, existingSessionGeneration).Return("", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{Name: "notes", Command: "claude"})
 
@@ -64,14 +64,14 @@ func TestConnectWindow(t *testing.T) {
 		c, mTmux, mLister, mDir, mHome := windowConnector(t)
 		attachedTo(mLister, "second-brain", "/home/dev/brain")
 		notADirectory(mHome, mDir, "notes")
-		mTmux.EXPECT().ListWindows("$9").Return([]*model.TmuxWindow{{Name: "shell", Index: 1}}, nil)
+		mTmux.EXPECT().ListWindows("$9", existingSessionGeneration).Return([]*model.TmuxWindow{{Name: "shell", Index: 1}}, nil)
 		mTmux.EXPECT().NewWindowInSession(model.TmuxWindowOpts{
 			Name:          "notes",
 			StartDir:      "/home/dev/brain",
 			TargetSession: "$9",
 			Command:       "claude",
-		}).Return("second-brain:2", nil)
-		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}).Return("", nil)
+		}, existingSessionGeneration).Return("second-brain:2", nil)
+		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}, existingSessionGeneration).Return("", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{Name: "notes", Command: "claude"})
 
@@ -85,8 +85,8 @@ func TestConnectWindow(t *testing.T) {
 		mTmux.EXPECT().NewWindowInSession(model.TmuxWindowOpts{
 			StartDir:      "/home/dev/brain",
 			TargetSession: "$9",
-		}).Return("second-brain:2", nil)
-		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}).Return("", nil)
+		}, existingSessionGeneration).Return("second-brain:2", nil)
+		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}, existingSessionGeneration).Return("", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{})
 
@@ -104,7 +104,7 @@ func TestConnectWindow(t *testing.T) {
 			TargetSession: "$9",
 			Command:       "claude",
 			Background:    true,
-		}).Return("second-brain:5", nil)
+		}, existingSessionGeneration).Return("second-brain:5", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{
 			Name: "claude", Command: "claude", New: true, Background: true,
@@ -118,11 +118,11 @@ func TestConnectWindow(t *testing.T) {
 		c, mTmux, mLister, mDir, mHome := windowConnector(t)
 		attachedTo(mLister, "second-brain", "/home/dev/brain")
 		notADirectory(mHome, mDir, "claude")
-		mTmux.EXPECT().ListWindows("$9").Return([]*model.TmuxWindow{
+		mTmux.EXPECT().ListWindows("$9", existingSessionGeneration).Return([]*model.TmuxWindow{
 			{Name: "claude", Index: 2},
 			{Name: "claude", Index: 5},
 		}, nil)
-		mTmux.EXPECT().SendKeys("$9:2", "another prompt").Return("", nil)
+		mTmux.EXPECT().SendKeys("$9:2", "another prompt", existingSessionGeneration).Return("", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{
 			Name: "claude", Command: "another prompt", Background: true,
@@ -136,13 +136,13 @@ func TestConnectWindow(t *testing.T) {
 		c, mTmux, mLister, mDir, mHome := windowConnector(t)
 		attachedTo(mLister, "second-brain", "/home/dev/brain")
 		notADirectory(mHome, mDir, "notes")
-		mTmux.EXPECT().ListWindows("$9").Return(nil, nil)
+		mTmux.EXPECT().ListWindows("$9", existingSessionGeneration).Return(nil, nil)
 		mTmux.EXPECT().NewWindowInSession(model.TmuxWindowOpts{
 			Name:          "notes",
 			StartDir:      "/home/dev/brain",
 			TargetSession: "$9",
 			Background:    true,
-		}).Return("second-brain:2", nil)
+		}, existingSessionGeneration).Return("second-brain:2", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{Name: "notes", Background: true})
 
@@ -155,13 +155,13 @@ func TestConnectWindow(t *testing.T) {
 		attachedTo(mLister, "second-brain", "/home/dev/brain")
 		mHome.EXPECT().ExpandPath("~/c/sesh").Return("/home/dev/c/sesh", nil)
 		mDir.EXPECT().Dir("/home/dev/c/sesh").Return(true, "/home/dev/c/sesh")
-		mTmux.EXPECT().ListWindows("$9").Return(nil, nil)
+		mTmux.EXPECT().ListWindows("$9", existingSessionGeneration).Return(nil, nil)
 		mTmux.EXPECT().NewWindowInSession(model.TmuxWindowOpts{
 			Name:          "sesh",
 			StartDir:      "/home/dev/c/sesh",
 			TargetSession: "$9",
-		}).Return("second-brain:2", nil)
-		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}).Return("", nil)
+		}, existingSessionGeneration).Return("second-brain:2", nil)
+		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}, existingSessionGeneration).Return("", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{Name: "~/c/sesh"})
 
@@ -174,9 +174,9 @@ func TestConnectWindow(t *testing.T) {
 		attachedTo(mLister, "second-brain", "/home/dev/brain")
 		mHome.EXPECT().ExpandPath("~/c/sesh").Return("/home/dev/c/sesh", nil)
 		mDir.EXPECT().Dir("/home/dev/c/sesh").Return(true, "/home/dev/c/sesh")
-		mTmux.EXPECT().ListWindows("$9").Return([]*model.TmuxWindow{{Name: "sesh", Index: 3}}, nil)
-		mTmux.EXPECT().SelectWindow("$9:3").Return("", nil)
-		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}).Return("", nil)
+		mTmux.EXPECT().ListWindows("$9", existingSessionGeneration).Return([]*model.TmuxWindow{{Name: "sesh", Index: 3}}, nil)
+		mTmux.EXPECT().SelectWindow("$9:3", existingSessionGeneration).Return("", nil)
+		mTmux.EXPECT().SwitchOrAttach("$9", model.ConnectOpts{}, existingSessionGeneration).Return("", nil)
 
 		target, err := c.ConnectWindow(model.WindowConnectOpts{Name: "~/c/sesh"})
 
@@ -187,19 +187,19 @@ func TestConnectWindow(t *testing.T) {
 	t.Run("switches the client explicitly when triggered from outside tmux", func(t *testing.T) {
 		c, mTmux, mLister, _, _ := windowConnector(t)
 		mLister.EXPECT().FindTmuxSession("second-brain").Return(model.SeshSession{
-			Src: "tmux", Name: "second-brain", Path: "/home/dev/brain",
+			Src: "tmux", Name: "second-brain", Path: "/home/dev/brain", TmuxSessionID: "$9", TmuxServerGeneration: existingSessionGeneration,
 		}, true)
 		mTmux.EXPECT().IsAttached().Return(false)
 		mTmux.EXPECT().NewWindowInSession(model.TmuxWindowOpts{
 			StartDir:      "/home/dev/brain",
 			TargetSession: "$9",
 			Command:       "claude",
-		}).Return("second-brain:2", nil)
+		}, existingSessionGeneration).Return("second-brain:2", nil)
 		mTmux.EXPECT().ListClients().Return([]model.TmuxClient{
 			{Name: "/dev/ttys002", TTY: "/dev/ttys002", SessionID: "$2"},
 		}, nil)
 		mTmux.EXPECT().ResolveClient().Return("/dev/ttys002")
-		mTmux.EXPECT().SwitchClientTarget("/dev/ttys002", "$9").Return("", nil)
+		mTmux.EXPECT().SwitchClientTarget("/dev/ttys002", "$9", existingSessionGeneration).Return("", nil)
 
 		mZoxide := zoxide.NewMockZoxide(t)
 		mZoxide.EXPECT().Add("/home/dev/brain").Return(nil)

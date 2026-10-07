@@ -18,15 +18,17 @@ func TestWindowListUsesVerifiedSessionID(t *testing.T) {
 		for _, jsonOutput := range []bool{false, true} {
 			t.Run(name+map[bool]string{false: "/text", true: "/json"}[jsonOutput], func(t *testing.T) {
 				config := filepath.Join(t.TempDir(), "sesh.toml")
+				const generation = "101:1700000000:/tmp/tmux-fixture"
 				require.NoError(t, os.WriteFile(config, nil, 0600))
 				s := shell.NewMockShell(t)
 				s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-					strings.Join([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$8", "100", "0", "0", name, "/user", "", "1"}, "::"),
-					strings.Join([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "100", "0", "0", "bridge", "/bridge", "", "1"}, "::"),
+					strings.Join([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$8", "100", "0", "0", name, "/user", "", "1", generation}, "::"),
+					strings.Join([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "100", "0", "0", "bridge", "/bridge", "", "1", generation}, "::"),
 				}, nil)
 				s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$8", "--", model.SSHBridgeIdentityEnv).Return("", nil)
 				s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).Return(model.SSHBridgeIdentityEnv+"=ssh/host/work", nil)
-				s.EXPECT().ListCmd("tmux", "list-windows", "-t", "$8", "-F", mock.Anything).Return(nil, nil).Once()
+				s.EXPECT().ListCmd("tmux", "if-shell", "-F", "-t", "$8:", mock.Anything,
+					"'list-windows' '-t' '$8' '-F' '#{window_index}::#{window_name}::#{pane_current_path}::#{window_active}'", "if-shell").Return(nil, nil).Once()
 				base := NewBaseDeps()
 				base.Shell = s
 				root := &cobra.Command{Use: "sesh"}

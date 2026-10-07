@@ -32,7 +32,16 @@ func connectToTmux(c *RealConnector, connection model.Connection, opts model.Con
 		}
 	}
 
-	sessionID, err := tmux.LocalSessionID(c.tmux, connection.Session.Name)
+	var sessionID string
+	var generation []string
+	var err error
+	if connection.New {
+		sessionID, err = tmux.LocalSessionID(c.tmux, connection.Session.Name)
+	} else {
+		_, err = tmux.VerifyLocalSession(c.tmux, connection.Session.TmuxSessionID, connection.Session.TmuxServerGeneration)
+		sessionID = connection.Session.TmuxSessionID
+		generation = []string{connection.Session.TmuxServerGeneration}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -43,11 +52,11 @@ func connectToTmux(c *RealConnector, connection model.Connection, opts model.Con
 			c.startup.Exec(connection.Session, sessionID)
 		}
 	}
-	message, err := c.focusSession(sessionID, opts.Switch)
+	message, err := c.focusSession(sessionID, opts.Switch, generation...)
 	return strings.Replace(message, sessionID, connection.Session.Name, 1), err
 }
 
-func (c *RealConnector) connectDetached(sessionName string) (string, error) {
+func (c *RealConnector) connectDetached(sessionName string, serverGeneration ...string) (string, error) {
 	// Reaching tmux is checked separately from picking a client, because the two
 	// failures need opposite handling and look identical from ResolveClient. A
 	// GUI launcher (Leader Key, Raycast, an osascript binding) runs sesh with a
@@ -63,15 +72,20 @@ func (c *RealConnector) connectDetached(sessionName string) (string, error) {
 	// forward is still the useful thing to do: the user lands where they can
 	// attach.
 	if len(clients) == 0 {
+		if len(serverGeneration) != 0 {
+			if _, err := tmux.VerifyLocalSession(c.tmux, sessionName, serverGeneration[0]); err != nil {
+				return "", err
+			}
+		}
 		c.focuser.Activate(c.config.Terminal)
 		return fmt.Sprintf("connected to tmux session: %s", sessionName), nil
 	}
 
 	client := c.tmux.ResolveClient()
 	if client != "" {
-		_, err = c.tmux.SwitchClientTarget(client, sessionName)
+		_, err = c.tmux.SwitchClientTarget(client, sessionName, serverGeneration...)
 	} else {
-		_, err = c.tmux.SwitchClient(sessionName)
+		_, err = c.tmux.SwitchClient(sessionName, serverGeneration...)
 	}
 
 	// Worth focusing either way: on failure the user at least lands on the tmux

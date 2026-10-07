@@ -13,7 +13,7 @@ import (
 
 type Tmux interface {
 	ListSessions() ([]*model.TmuxSession, error)
-	ListWindows(targetSession string) ([]*model.TmuxWindow, error)
+	ListWindows(targetSession string, serverGeneration ...string) ([]*model.TmuxWindow, error)
 	ListAllWindowNames(format string) (map[string][]string, error)
 	ListAllWindows() (map[string][]model.TmuxWindow, error)
 	NewSession(sessionName string, startDir string) (string, error)
@@ -22,23 +22,23 @@ type Tmux interface {
 	NewSessionWithCommand(opts model.TmuxSessionOpts) (string, error)
 	GetSessionEnvironment(targetSession string, name string) (string, error)
 	IsPaneDead(targetSession string) (bool, error)
-	NewWindowInSession(opts model.TmuxWindowOpts) (string, error)
+	NewWindowInSession(opts model.TmuxWindowOpts, serverGeneration ...string) (string, error)
 	IsAttached() bool
-	AttachSession(targetSession string) (string, error)
-	SendKeys(name string, command string) (string, error)
-	SwitchClient(targetSession string) (string, error)
-	CapturePane(targetSession string) (string, error)
+	AttachSession(targetSession string, serverGeneration ...string) (string, error)
+	SendKeys(name string, command string, serverGeneration ...string) (string, error)
+	SwitchClient(targetSession string, serverGeneration ...string) (string, error)
+	CapturePane(targetSession string, serverGeneration ...string) (string, error)
 	NextWindowInSession(targetSession string) (string, error)
-	SelectWindow(targetWindow string) (string, error)
-	SwitchOrAttach(name string, opts model.ConnectOpts) (string, error)
+	SelectWindow(targetWindow string, serverGeneration ...string) (string, error)
+	SwitchOrAttach(name string, opts model.ConnectOpts, serverGeneration ...string) (string, error)
 	ListTmuxPanes() ([]*model.TmuxPane, error)
 	SelectPane(pane *model.TmuxPane) (string, error)
 	GetCurrentSession() (model.TmuxSession, error)
 	ListClients() ([]model.TmuxClient, error)
 	ResolveClient() string
 	FocusedSessionPath() (string, error)
-	SwitchClientTarget(client string, targetSession string) (string, error)
-	RenameSession(target string, newName string) (string, error)
+	SwitchClientTarget(client string, targetSession string, serverGeneration ...string) (string, error)
+	RenameSession(target string, newName string, serverGeneration ...string) (string, error)
 	KillSession(target string) (string, error)
 	KillSessionInGeneration(sessionID, serverGeneration string) (string, error)
 }
@@ -56,17 +56,21 @@ func NewTmux(os oswrap.Os, shell shell.Shell, bin string) Tmux {
 	return &RealTmux{os, shell, bin}
 }
 
-func (t *RealTmux) AttachSession(targetSession string) (string, error) {
+func (t *RealTmux) AttachSession(targetSession string, serverGeneration ...string) (string, error) {
 	// Using t.shell.Cmd() here (capturing stdout/stderr in buffers) would block psmux on Windows.
-	return t.shell.CmdWithOutput(t.bin, "attach-session", "-t", targetSession)
+	args, err := sessionCommandArgs(targetSession, serverGeneration, "attach-session", "-t", targetSession)
+	if err != nil {
+		return "", err
+	}
+	return t.shell.CmdWithOutput(t.bin, args...)
 }
 
-func (t *RealTmux) SwitchClient(targetSession string) (string, error) {
-	return t.shell.Cmd(t.bin, "switch-client", "-t", targetSession)
+func (t *RealTmux) SwitchClient(targetSession string, serverGeneration ...string) (string, error) {
+	return t.sessionCommand(t.bin, targetSession, serverGeneration, "switch-client", "-t", targetSession)
 }
 
-func (t *RealTmux) SendKeys(targetPane string, keys string) (string, error) {
-	return t.shell.Cmd(t.bin, "send-keys", "-t", targetPane, keys, "Enter")
+func (t *RealTmux) SendKeys(targetPane string, keys string, serverGeneration ...string) (string, error) {
+	return t.sessionCommand(t.bin, targetPane, serverGeneration, "send-keys", "-t", targetPane, keys, "Enter")
 }
 
 func (t *RealTmux) NewSession(sessionName string, startDir string) (string, error) {
@@ -116,8 +120,8 @@ func (t *RealTmux) GetSessionEnvironment(targetSession string, name string) (str
 	return value, nil
 }
 
-func (t *RealTmux) CapturePane(targetSession string) (string, error) {
-	return t.shell.Cmd(t.bin, "capture-pane", "-e", "-p", "-t", targetSession)
+func (t *RealTmux) CapturePane(targetSession string, serverGeneration ...string) (string, error) {
+	return t.sessionCommand(t.bin, targetSession, serverGeneration, "capture-pane", "-e", "-p", "-t", targetSession)
 }
 
 func (t *RealTmux) NextWindowInSession(targetSession string) (string, error) {
@@ -129,6 +133,6 @@ func (t *RealTmux) IsAttached() bool {
 	return len(t.os.Getenv("TMUX")) > 0
 }
 
-func (t *RealTmux) SwitchClientTarget(client string, targetSession string) (string, error) {
-	return t.shell.Cmd(t.bin, "switch-client", "-c", client, "-t", targetSession)
+func (t *RealTmux) SwitchClientTarget(client string, targetSession string, serverGeneration ...string) (string, error) {
+	return t.sessionCommand(t.bin, targetSession, serverGeneration, "switch-client", "-c", client, "-t", targetSession)
 }

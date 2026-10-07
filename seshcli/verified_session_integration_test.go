@@ -176,6 +176,8 @@ func TestLocalOperationsUseVerifiedIDsOnPrivateTmux(t *testing.T) {
 			wrapper := filepath.Join(dir, "tmux")
 			server := shell.Quote(binary) + " -S " + shell.Quote(socket) + " -f /dev/null"
 			script := "#!/bin/sh\n" +
+				"if [ \"$1\" = if-shell ]; then case \"$6\" in \"'attach-session' '-t' '\\$1'\"|\"'switch-client' '-c' 'client' '-t' '\\$1'\") " +
+				server + " if-shell -F -t \"$4\" \"$5\" \"display-message -p -t '\\$1:' '#{session_id}'\" \"$7\" > " + shell.Quote(focus) + "; exit $?;; esac; fi\n" +
 				"case \"$1\" in\n" +
 				"list-clients) printf 'client::/dev/test::$0::100\\n'; exit 0;;\n" +
 				"attach-session|switch-client) shift; while [ \"$#\" -gt 0 ]; do if [ \"$1\" = -t ]; then target=$2; break; fi; shift; done; " +

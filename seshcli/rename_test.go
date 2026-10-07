@@ -15,19 +15,21 @@ import (
 // tmux.Tmux interface) and overrides RenameSession to capture its arguments.
 type tmuxRenamer struct {
 	*tmux.MockTmux
-	called     bool
-	gotTarget  string
-	gotNewName string
+	called        bool
+	gotTarget     string
+	gotNewName    string
+	gotGeneration []string
 }
 
 func newTmuxRenamer() *tmuxRenamer {
 	return &tmuxRenamer{MockTmux: new(tmux.MockTmux)}
 }
 
-func (t *tmuxRenamer) RenameSession(target string, newName string) (string, error) {
+func (t *tmuxRenamer) RenameSession(target string, newName string, generation ...string) (string, error) {
 	t.called = true
 	t.gotTarget = target
 	t.gotNewName = newName
+	t.gotGeneration = generation
 	return "", nil
 }
 
@@ -94,14 +96,15 @@ func TestRenameTarget(t *testing.T) {
 }
 
 func TestRunEnrich(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
 	t.Run("renames when the enriched name differs", func(t *testing.T) {
 		mockLister := new(lister.MockLister)
 		mockNamer := new(namer.MockNamer)
 		mockGithub := new(github.MockGithub)
 		mockTmux := newTmuxRenamer()
-		mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: "400-status", ID: "$1"}}, nil).Once()
+		mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: "400-status", ID: "$1", ServerGeneration: generation, Path: "/p"}}, nil).Once()
 		mockLister.On("GetAttachedTmuxSession").
-			Return(model.SeshSession{Name: "400-status", Path: "/p"}, true)
+			Return(model.SeshSession{Name: "400-status", Path: "/p", TmuxSessionID: "$1", TmuxServerGeneration: generation}, true)
 		mockNamer.On("Name", "/p").Return("400-status", nil)
 		mockGithub.On("Issue", "/p").
 			Return(github.Issue{Number: 400, Title: "warm the cache", State: "OPEN"}, true, nil)
@@ -114,6 +117,7 @@ func TestRunEnrich(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.Equal(t, "$1", mockTmux.gotTarget)
+		assert.Equal(t, []string{generation}, mockTmux.gotGeneration)
 		assert.Equal(t, "400-status — warm the cache", mockTmux.gotNewName)
 	})
 
@@ -122,8 +126,9 @@ func TestRunEnrich(t *testing.T) {
 		mockNamer := new(namer.MockNamer)
 		mockGithub := new(github.MockGithub)
 		mockTmux := newTmuxRenamer()
+		mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: "400-status — warm the cache", ID: "$1", ServerGeneration: generation, Path: "/p"}}, nil).Once()
 		mockLister.On("GetAttachedTmuxSession").
-			Return(model.SeshSession{Name: "400-status — warm the cache", Path: "/p"}, true)
+			Return(model.SeshSession{Name: "400-status — warm the cache", Path: "/p", TmuxSessionID: "$1", TmuxServerGeneration: generation}, true)
 		mockNamer.On("Name", "/p").Return("400-status", nil)
 		mockGithub.On("Issue", "/p").
 			Return(github.Issue{Number: 400, Title: "warm the cache", State: "OPEN"}, true, nil)

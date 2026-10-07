@@ -107,12 +107,12 @@ func listWindows(cmd *cobra.Command, base *BaseDeps) error {
 		return err
 	}
 
-	targetSession, err := windowSessionID(deps, targetFlag(cmd))
+	targetSession, generation, err := windowSessionID(deps, targetFlag(cmd))
 	if err != nil {
 		return err
 	}
 
-	windows, err := deps.Tmux.ListWindows(targetSession)
+	windows, err := deps.Tmux.ListWindows(targetSession, generation)
 	if err != nil {
 		return err
 	}
@@ -162,16 +162,24 @@ func connectWindow(cmd *cobra.Command, base *BaseDeps, name string) error {
 // windowSessionID keeps the listing command honest about its target: an empty
 // target only means "the attached session" when there is one, and a named
 // session has to already be running to have anything to list.
-func windowSessionID(deps *Deps, targetSession string) (string, error) {
+func windowSessionID(deps *Deps, targetSession string) (string, string, error) {
+	var session model.SeshSession
 	if targetSession == "" {
 		if !deps.Tmux.IsAttached() {
-			return "", errors.New("not inside a tmux session, use --target to specify one")
+			return "", "", errors.New("not inside a tmux session, use --target to specify one")
 		}
-		session, found := deps.Lister.GetAttachedTmuxSession()
+		var found bool
+		session, found = deps.Lister.GetAttachedTmuxSession()
 		if !found {
-			return "", errors.New("no local attached session found, use --target to specify one")
+			return "", "", errors.New("no local attached session found, use --target to specify one")
 		}
-		targetSession = session.Name
+	} else {
+		var found bool
+		session, found = deps.Lister.FindTmuxSession(targetSession)
+		if !found {
+			return "", "", fmt.Errorf("session %q not found", targetSession)
+		}
 	}
-	return tmux.LocalSessionID(deps.Tmux, targetSession)
+	_, err := tmux.VerifyLocalSession(deps.Tmux, session.TmuxSessionID, session.TmuxServerGeneration)
+	return session.TmuxSessionID, session.TmuxServerGeneration, err
 }

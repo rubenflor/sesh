@@ -1,5 +1,5 @@
 package tmux
 
-func (t *RealTmux) SelectWindow(targetWindow string) (string, error) {
-	return t.shell.Cmd("tmux", "select-window", "-t", targetWindow)
+func (t *RealTmux) SelectWindow(targetWindow string, serverGeneration ...string) (string, error) {
+	return t.sessionCommand("tmux", targetWindow, serverGeneration, "select-window", "-t", targetWindow)
 }

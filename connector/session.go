@@ -19,8 +19,9 @@ func (c *RealConnector) targetSession(name string) (model.SeshSession, string, e
 	if !exists {
 		return model.SeshSession{}, "", errors.New("not inside a tmux session, use --target to specify one")
 	}
-	id, err := tmux.LocalSessionID(c.tmux, session.Name)
-	return session, id, err
+	live, err := tmux.VerifyLocalSession(c.tmux, session.TmuxSessionID, session.TmuxServerGeneration)
+	session.Path = live.Path
+	return session, session.TmuxSessionID, err
 }
 
 // ensureSession resolves a name to a running tmux session, starting it when it
@@ -58,8 +59,9 @@ func (c *RealConnector) ensureSession(name string) (model.SeshSession, string, e
 		c.zoxide.Add(connection.Session.Path)
 	}
 	if !connection.New {
-		id, err := tmux.LocalSessionID(c.tmux, connection.Session.Name)
-		return connection.Session, id, err
+		live, err := tmux.VerifyLocalSession(c.tmux, connection.Session.TmuxSessionID, connection.Session.TmuxServerGeneration)
+		connection.Session.Path = live.Path
+		return connection.Session, connection.Session.TmuxSessionID, err
 	}
 	if connection.Session.Src == "tmuxinator" {
 		if _, err := c.tmuxinator.Start(connection.Session.Name); err != nil {
@@ -81,12 +83,12 @@ func (c *RealConnector) ensureSession(name string) (model.SeshSession, string, e
 
 // focusSession brings the client to a session, honouring the same
 // switch-vs-attach rules as Connect.
-func (c *RealConnector) focusSession(sessionName string, doSwitch bool) (string, error) {
+func (c *RealConnector) focusSession(sessionName string, doSwitch bool, serverGeneration ...string) (string, error) {
 	// When invoked from outside tmux (e.g. osascript/browser dispatcher),
 	// `switch-client -t` has no current client to act on. Find the active
 	// client, switch it explicitly, and bring the terminal to the front.
 	if doSwitch && !c.tmux.IsAttached() {
-		return c.connectDetached(sessionName)
+		return c.connectDetached(sessionName, serverGeneration...)
 	}
-	return c.tmux.SwitchOrAttach(sessionName, model.ConnectOpts{Switch: doSwitch})
+	return c.tmux.SwitchOrAttach(sessionName, model.ConnectOpts{Switch: doSwitch}, serverGeneration...)
 }

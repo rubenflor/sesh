@@ -187,13 +187,15 @@ func (suite *PreviewerTestSuite) TestPreview_NoMatch() {
 }
 
 func (suite *PreviewerTestSuite) setupTmuxMocks(inputName, trimmedName, expectedOutput string) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
 	suite.mockIcon.On("RemoveIcon", inputName).Return(trimmedName)
 	suite.mockLister.On("FindTmuxSession", trimmedName).Return(model.SeshSession{
-		Name: trimmedName,
-		Path: testHomePath + "/c/" + trimmedName,
+		Name:          trimmedName,
+		Path:          testHomePath + "/c/" + trimmedName,
+		TmuxSessionID: "$1", TmuxServerGeneration: generation,
 	}, true)
-	suite.mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: trimmedName, ID: "$1"}}, nil)
-	suite.mockTmux.On("CapturePane", "$1").Return(expectedOutput, nil)
+	suite.mockTmux.On("ListSessions").Return([]*model.TmuxSession{{Name: trimmedName, ID: "$1", ServerGeneration: generation}}, nil)
+	suite.mockTmux.On("CapturePane", "$1", generation).Return(expectedOutput, nil)
 }
 
 func (suite *PreviewerTestSuite) setupDefaultConfigMocks(inputName, trimmedName, expectedPath, expectedOutput string) {

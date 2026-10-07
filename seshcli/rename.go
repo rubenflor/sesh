@@ -41,15 +41,15 @@ func runEnrich(deps *Deps, args []string) error {
 	if !ok || target.Name == "" {
 		return nil
 	}
-	newName := enrichedName(deps, target.Path)
-	if newName == "" || newName == target.Name {
-		return nil
-	}
-	sessionID, err := tmux.LocalSessionID(deps.Tmux, target.Name)
+	live, err := tmux.VerifyLocalSession(deps.Tmux, target.TmuxSessionID, target.TmuxServerGeneration)
 	if err != nil {
 		return err
 	}
-	_, err = deps.Tmux.RenameSession(sessionID, newName)
+	newName := enrichedName(deps, live.Path)
+	if newName == "" || newName == live.Name {
+		return nil
+	}
+	_, err = deps.Tmux.RenameSession(target.TmuxSessionID, newName, target.TmuxServerGeneration)
 	return err
 }
 

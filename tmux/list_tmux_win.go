@@ -17,13 +17,17 @@ func listWindowsFormat() string {
 	return strings.Join(variables, separator)
 }
 
-func (t *RealTmux) ListWindows(targetSession string) ([]*model.TmuxWindow, error) {
+func (t *RealTmux) ListWindows(targetSession string, serverGeneration ...string) ([]*model.TmuxWindow, error) {
 	var args []string
 	args = append(args, "list-windows")
 	if targetSession != "" {
 		args = append(args, "-t", targetSession)
 	}
 	args = append(args, "-F", listWindowsFormat())
+	args, err := sessionCommandArgs(targetSession, serverGeneration, args...)
+	if err != nil {
+		return nil, err
+	}
 
 	output, err := t.shell.ListCmd(t.bin, args...)
 	if err != nil {

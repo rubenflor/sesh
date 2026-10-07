@@ -207,11 +207,11 @@ func (t *RealTmux) focusedTarget() (string, error) {
 
 // switchClient moves the resolved client, falling back to letting tmux pick
 // one when sesh cannot name it.
-func (t *RealTmux) switchClient(targetSession string) (string, error) {
+func (t *RealTmux) switchClient(targetSession string, serverGeneration ...string) (string, error) {
 	if client := t.ResolveClient(); client != "" {
-		return t.SwitchClientTarget(client, targetSession)
+		return t.SwitchClientTarget(client, targetSession, serverGeneration...)
 	}
-	return t.SwitchClient(targetSession)
+	return t.SwitchClient(targetSession, serverGeneration...)
 }
 
 // currentSessionID pulls the session id out of $TMUX, which tmux sets to

@@ -48,22 +48,22 @@ func TestWindowConnectUsesVerifiedSessionID(t *testing.T) {
 			li := lister.NewMockLister(t)
 			zo := zoxide.NewMockZoxide(t)
 			m.EXPECT().IsAttached().Return(true)
-			li.EXPECT().FindTmuxSession("$2").Return(model.SeshSession{Src: "tmux", Name: "$2", Path: "/user"}, true)
+			li.EXPECT().FindTmuxSession("$2").Return(model.SeshSession{Src: "tmux", Name: "$2", Path: "/user", TmuxSessionID: "$8", TmuxServerGeneration: existingSessionGeneration}, true)
 			zo.EXPECT().Add("/user").Return(nil)
 			m.EXPECT().ListSessions().Return([]*model.TmuxSession{
-				{Name: "$2", ID: "$8"},
+				{Name: "$2", ID: "$8", ServerGeneration: existingSessionGeneration, Path: "/user"},
 				{Name: "bridge", ID: "$2", SSHBridgeIdentity: "ssh/host/work"},
 			}, nil).Once()
 			var windows []*model.TmuxWindow
 			if reuse {
 				windows = []*model.TmuxWindow{{Name: "notes", Index: 4}}
-				m.EXPECT().SendKeys("$8:4", "command").Return("", nil).Once()
-				m.EXPECT().SelectWindow("$8:4").Return("", nil).Once()
+				m.EXPECT().SendKeys("$8:4", "command", existingSessionGeneration).Return("", nil).Once()
+				m.EXPECT().SelectWindow("$8:4", existingSessionGeneration).Return("", nil).Once()
 			} else {
-				m.EXPECT().NewWindowInSession(model.TmuxWindowOpts{Name: "notes", StartDir: "/user", TargetSession: "$8", Command: "command"}).Return("$2:4", nil).Once()
+				m.EXPECT().NewWindowInSession(model.TmuxWindowOpts{Name: "notes", StartDir: "/user", TargetSession: "$8", Command: "command"}, existingSessionGeneration).Return("$2:4", nil).Once()
 			}
-			m.EXPECT().ListWindows("$8").Return(windows, nil).Once()
-			m.EXPECT().SwitchOrAttach("$8", model.ConnectOpts{}).Return("", nil).Once()
+			m.EXPECT().ListWindows("$8", existingSessionGeneration).Return(windows, nil).Once()
+			m.EXPECT().SwitchOrAttach("$8", model.ConnectOpts{}, existingSessionGeneration).Return("", nil).Once()
 			c := &RealConnector{tmux: m, lister: li, zoxide: zo}
 
 			target, err := c.ConnectWindow(model.WindowConnectOpts{Session: "$2", Name: "notes", Path: "/user", Command: "command"})

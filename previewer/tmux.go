@@ -2,6 +2,7 @@ package previewer
 
 import (
 	"github.com/joshmedeski/sesh/v2/lister"
+	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/tmux"
 )
 
@@ -18,17 +19,17 @@ func (s *TmuxPreviewStrategy) Execute(name string) (string, error) {
 	session, sessionExists := s.lister.FindTmuxSession(name)
 
 	if sessionExists {
-		sessionID, err := tmux.LocalSessionID(s.tmux, session.Name)
-		if err != nil {
-			return "", err
-		}
-		output, err := s.tmux.CapturePane(sessionID)
-		if err != nil {
-			return "", err
-		}
-
-		return output, nil
+		return PreviewTmuxSession(s.tmux, session)
 	}
 
 	return "", nil
+}
+
+// PreviewTmuxSession retains the selected row across captures, including watch
+// frames. A renamed session remains the target; a replacement never does.
+func PreviewTmuxSession(t tmux.Tmux, session model.SeshSession) (string, error) {
+	if _, err := tmux.VerifyLocalSession(t, session.TmuxSessionID, session.TmuxServerGeneration); err != nil {
+		return "", err
+	}
+	return t.CapturePane(session.TmuxSessionID, session.TmuxServerGeneration)
 }
