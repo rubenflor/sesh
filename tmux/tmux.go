@@ -33,7 +33,7 @@ type Tmux interface {
 	SwitchOrAttach(name string, opts model.ConnectOpts) (string, error)
 	ListTmuxPanes() ([]*model.TmuxPane, error)
 	SelectPane(pane *model.TmuxPane) (string, error)
-	GetCurrentSession() (string, error)
+	GetCurrentSession() (model.TmuxSession, error)
 	ListClients() ([]model.TmuxClient, error)
 	ResolveClient() string
 	FocusedSessionPath() (string, error)

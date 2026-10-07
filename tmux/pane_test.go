@@ -6,6 +6,7 @@ import (
 
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/shell"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,5 +89,59 @@ func TestSelectPaneRejectsMissingIDs(t *testing.T) {
 		message, err := NewTmux(nil, nil, "custom-tmux").SelectPane(pane)
 		require.EqualError(t, err, "pane has no server-assigned session, window or pane ID")
 		require.Empty(t, message)
+	}
+}
+
+func TestGetCurrentSessionVerifiesIDAndGeneration(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
+	const format = "#{session_id}::" + serverGenerationFormat
+	for _, tt := range []struct {
+		name       string
+		initial    string
+		initialErr error
+		marker     string
+		markerErr  error
+		live       string
+		liveErr    error
+		wantErr    bool
+	}{
+		{name: "local session", initial: "$1::" + generation, live: "$1::" + generation},
+		{name: "bridge ownership is retained", initial: "$1::" + generation, marker: "ssh/host/work", live: "$1::" + generation},
+		{name: "query failure", initialErr: assert.AnError, wantErr: true},
+		{name: "empty identity", wantErr: true},
+		{name: "display name is not an ID", initial: "name::" + generation, wantErr: true},
+		{name: "noncanonical ID", initial: "$01::" + generation, wantErr: true},
+		{name: "missing generation", initial: "$1", wantErr: true},
+		{name: "unknown generation", initial: "$1::", wantErr: true},
+		{name: "invalid generation", initial: "$1::101:0:/tmp/tmux-fixture", wantErr: true},
+		{name: "unexpanded generation", initial: "$1::" + serverGenerationFormat, wantErr: true},
+		{name: "disappeared before ownership", initial: "$1::" + generation, markerErr: assert.AnError, wantErr: true},
+		{name: "disappeared after ownership", initial: "$1::" + generation, liveErr: assert.AnError, wantErr: true},
+		{name: "empty live identity", initial: "$1::" + generation, wantErr: true},
+		{name: "namesake must not substitute ID", initial: "$1::" + generation, live: "$2::" + generation, wantErr: true},
+		{name: "restart after ownership", initial: "$1::" + generation, live: "$1::102:1700000001:/tmp/tmux-fixture", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := shell.NewMockShell(t)
+			query := s.EXPECT().Cmd("custom-tmux", "display-message", "-p", format).Return(tt.initial, tt.initialErr).Once()
+			if tt.initial == "$1::"+generation {
+				marker := s.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
+					Return(model.SSHBridgeIdentityEnv+"="+tt.marker, tt.markerErr).Once().NotBefore(query)
+				if tt.markerErr == nil {
+					s.EXPECT().Cmd("custom-tmux", "display-message", "-p", "-t", "$1:", format).
+						Return(tt.live, tt.liveErr).Once().NotBefore(marker)
+				}
+			}
+
+			current, err := NewTmux(nil, s, "custom-tmux").GetCurrentSession()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, model.TmuxSession{}, current)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, model.TmuxSession{ID: "$1", ServerGeneration: generation, SSHBridgeIdentity: tt.marker}, current)
+			}
+		})
 	}
 }

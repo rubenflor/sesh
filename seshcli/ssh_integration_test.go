@@ -68,7 +68,8 @@ func sshIntegrationDeps(t *testing.T, caching bool) (*Deps, *shell.MockShell, *e
 	s.On("PrepareCmd", "zoxide query --list --score", map[string]string{}).
 		Return([]string{"zoxide", "query", "--list", "--score"}, nil).Maybe()
 	s.On("ListCmd", "zoxide", "query", "--list", "--score").Return([]string{}, nil).Maybe()
-	s.On("Cmd", "tmux", "display-message", "-p", "#{session_name}").Return("renamed-bridge", nil).Maybe()
+	s.On("Cmd", "tmux", "display-message", "-p", "#{session_id}::#{pid}:#{start_time}:#{socket_path}").Return("$1::101:1700000000:/tmp/tmux-fixture", nil).Maybe()
+	s.On("Cmd", "tmux", "display-message", "-p", "-t", "$1:", "#{session_id}::#{pid}:#{start_time}:#{socket_path}").Return("$1::101:1700000000:/tmp/tmux-fixture", nil).Maybe()
 	base := NewBaseDepsWithExec(runner)
 	base.Shell = s
 	base.Tmuxinator = tmuxinator.NewTmuxinator(s)

@@ -177,16 +177,16 @@ func GetAttachedTmuxSession(l *RealLister) (model.SeshSession, bool) {
 	if err != nil {
 		return model.SeshSession{}, false
 	}
-	current := ""
+	current := model.TmuxSession{}
 	if l.tmux.IsAttached() {
 		current, err = l.tmux.GetCurrentSession()
-		if err != nil || current == "" {
+		if err != nil || current.ID == "" || current.ServerGeneration == "" || current.SSHBridgeIdentity != "" {
 			return model.SeshSession{}, false
 		}
 	}
 	aliases := aliasesByName(l.config)
 	for _, session := range tmuxSessions {
-		if session.Attached != 0 && (current == "" || session.Name == current) {
+		if session.Attached != 0 && (current.ID == "" || (session.ID == current.ID && session.ServerGeneration == current.ServerGeneration)) {
 			if session.SSHBridgeIdentity != "" {
 				return model.SeshSession{}, false
 			}

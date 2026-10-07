@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/joshmedeski/sesh/v2/convert"
@@ -85,6 +86,41 @@ func (t *RealTmux) SelectPane(pane *model.TmuxPane) (string, error) {
 	return fmt.Sprintf("selected pane %d in window %d", pane.PaneIndex, pane.WindowIndex), nil
 }
 
-func (t *RealTmux) GetCurrentSession() (string, error) {
-	return t.shell.Cmd(t.bin, "display-message", "-p", "#{session_name}")
+// GetCurrentSession observes the current server identity, then verifies that
+// exact ID is still live in the same generation after reading its ownership.
+func (t *RealTmux) GetCurrentSession() (model.TmuxSession, error) {
+	current, err := t.sessionIdentity("")
+	if err != nil {
+		return model.TmuxSession{}, err
+	}
+	current.SSHBridgeIdentity, err = t.GetSessionEnvironment(current.ID, model.SSHBridgeIdentityEnv)
+	if err != nil {
+		return model.TmuxSession{}, fmt.Errorf("couldn't check current tmux session ownership: %w", err)
+	}
+	live, err := t.sessionIdentity(current.ID)
+	if err != nil {
+		return model.TmuxSession{}, err
+	}
+	if live.ID != current.ID || live.ServerGeneration != current.ServerGeneration {
+		return model.TmuxSession{}, fmt.Errorf("current tmux session identity changed")
+	}
+	return current, nil
+}
+
+func (t *RealTmux) sessionIdentity(target string) (model.TmuxSession, error) {
+	args := []string{"display-message", "-p"}
+	if target != "" {
+		args = append(args, "-t", target+":")
+	}
+	output, err := t.shell.Cmd(t.bin, append(args, "#{session_id}"+separator+serverGenerationFormat)...)
+	if err != nil {
+		return model.TmuxSession{}, err
+	}
+	id, generation, found := strings.Cut(output, separator)
+	digits, hasPrefix := strings.CutPrefix(id, "$")
+	number, idErr := strconv.ParseUint(digits, 10, 64)
+	if !found || !hasPrefix || idErr != nil || strconv.FormatUint(number, 10) != digits || !validServerGeneration(generation) {
+		return model.TmuxSession{}, fmt.Errorf("current tmux session has no valid server-assigned identity")
+	}
+	return model.TmuxSession{ID: id, ServerGeneration: generation}, nil
 }

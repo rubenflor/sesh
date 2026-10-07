@@ -383,13 +383,13 @@ func TestHideDuplicates(t *testing.T) {
 func TestHideAttachedBeforeHideDuplicates(t *testing.T) {
 	mockTmux := new(tmux.MockTmux)
 	mockTmux.On("IsAttached").Return(true)
-	mockTmux.On("GetCurrentSession").Return("project", nil)
+	mockTmux.On("GetCurrentSession").Return(model.TmuxSession{ID: "$1", ServerGeneration: "101:1700000000:/tmp/tmux-fixture"}, nil)
 	mockZoxide := new(zoxide.MockZoxide)
 	mockHome := new(home.MockHome)
 	mockTmuxinator := new(tmuxinator.MockTmuxinator)
 
 	mockTmux.On("ListSessions").Return([]*model.TmuxSession{
-		{Name: "project", Path: "/p", Attached: 1},
+		{ID: "$1", ServerGeneration: "101:1700000000:/tmp/tmux-fixture", Name: "project", Path: "/p", Attached: 1},
 	}, nil)
 	mockHome.On("ExpandPath", "/p").Return("/p", nil)
 

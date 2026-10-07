@@ -25,10 +25,13 @@ func bridgeOperationsBase(t *testing.T, marker string) (*BaseDeps, string) {
 	configPath := filepath.Join(t.TempDir(), "sesh.toml")
 	require.NoError(t, os.WriteFile(configPath, nil, 0600))
 	s := shell.NewMockShell(t)
-	s.On("Cmd", "tmux", "display-message", "-p", "#{session_name}").Return("renamed-bridge", nil).Maybe()
+	const generation = "101:1700000000:/tmp/tmux-fixture"
+	const identityFormat = "#{session_id}::#{pid}:#{start_time}:#{socket_path}"
+	s.On("Cmd", "tmux", "display-message", "-p", identityFormat).Return("$1::"+generation, nil).Maybe()
+	s.On("Cmd", "tmux", "display-message", "-p", "-t", "$1:", identityFormat).Return("$1::"+generation, nil).Maybe()
 	s.On("ListCmd", "tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-		strings.Join([]string{"100", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "100", "0", "0", "renamed-bridge", "/bridge", "", "1"}, "::"),
-		strings.Join([]string{"200", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", "other-client", "/local", "", "1"}, "::"),
+		strings.Join([]string{"100", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "100", "0", "0", "renamed-bridge", "/bridge", "", "1", generation}, "::"),
+		strings.Join([]string{"200", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", "other-client", "/local", "", "1", generation}, "::"),
 	}, nil)
 	s.On("CmdCapture", "tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
 		Return(model.SSHBridgeIdentityEnv+"="+marker, nil)

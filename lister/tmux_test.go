@@ -9,12 +9,41 @@ import (
 
 	"github.com/joshmedeski/sesh/v2/home"
 	"github.com/joshmedeski/sesh/v2/model"
+	"github.com/joshmedeski/sesh/v2/oswrap"
+	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/joshmedeski/sesh/v2/tmux"
 	"github.com/joshmedeski/sesh/v2/tmuxinator"
 	"github.com/joshmedeski/sesh/v2/zoxide"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAttachedSessionPreservesInventoryIdentityAfterRename(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
+	const identityFormat = "#{session_id}::#{pid}:#{start_time}:#{socket_path}"
+	s := shell.NewMockShell(t)
+	inventory := s.EXPECT().ListCmd("custom-tmux", "list-sessions", "-F", mock.Anything).Return([]string{
+		"200::::1::::100::0::::0::::::0::0::0::$1::200::0::0::a::/path/A::::3::" + generation,
+		"100::::1::::100::0::::0::::::0::0::0::$2::100::0::0::b::/path/B::::1::" + generation,
+	}, nil).Once()
+	s.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).Return("", nil).Twice()
+	s.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).Return("", nil).Once()
+	// After inventory, $2 is renamed away and current $1 is renamed to b.
+	s.EXPECT().Cmd("custom-tmux", "display-message", "-p", identityFormat).Return("$1::"+generation, nil).Once().NotBefore(inventory)
+	s.EXPECT().Cmd("custom-tmux", "display-message", "-p", "-t", "$1:", identityFormat).Return("$1::"+generation, nil).Once()
+	os := oswrap.NewMockOs(t)
+	os.EXPECT().Getenv("TMUX").Return("/tmp/tmux-fixture,101,1").Once()
+	l := NewLister(model.Config{}, nil, tmux.NewTmux(os, s, "custom-tmux"), nil, nil, nil, nil, nil)
+
+	session, found := l.GetAttachedTmuxSession()
+
+	require.True(t, found)
+	require.Equal(t, "$1", session.TmuxSessionID)
+	require.Equal(t, generation, session.TmuxServerGeneration)
+	require.Equal(t, "/path/A", session.Path)
+	require.Equal(t, 3, session.Windows)
+}
 
 func TestTmuxDiscoveryFiltersBridgeMarkersBeforeConversion(t *testing.T) {
 	m := tmux.NewMockTmux(t)
@@ -51,15 +80,16 @@ func TestTmuxDiscoveryFiltersBridgeMarkersBeforeConversion(t *testing.T) {
 }
 
 func TestGetAttachedTmuxSessionBridgeUnavailable(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
 	for _, marker := range []string{"ssh/host/work", ""} {
 		t.Run("marker="+marker, func(t *testing.T) {
 			m := tmux.NewMockTmux(t)
 			m.EXPECT().IsAttached().Return(true)
-			m.EXPECT().GetCurrentSession().Return("sesh-ssh-user", nil)
+			m.EXPECT().GetCurrentSession().Return(model.TmuxSession{ID: "$1", ServerGeneration: generation, SSHBridgeIdentity: marker}, nil)
 			m.EXPECT().ListSessions().Return([]*model.TmuxSession{
 				{Name: "detached", Path: "/detached"},
-				{Name: "sesh-ssh-user", Path: "/user", Attached: 1, SSHBridgeIdentity: marker},
-				{Name: "other-client", Path: "/other", Attached: 1},
+				{ID: "$1", ServerGeneration: generation, Name: "sesh-ssh-user", Path: "/user", Attached: 1, SSHBridgeIdentity: marker},
+				{ID: "$2", ServerGeneration: generation, Name: "other-client", Path: "/other", Attached: 1},
 			}, nil)
 			l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
 
@@ -78,14 +108,19 @@ func TestGetAttachedTmuxSessionBridgeUnavailable(t *testing.T) {
 }
 
 func TestAttachedSessionUsesCallingClientWithMultipleClients(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
 	for _, current := range []string{"local", "bridge"} {
 		t.Run(current, func(t *testing.T) {
 			m := tmux.NewMockTmux(t)
 			m.EXPECT().IsAttached().Return(true)
-			m.EXPECT().GetCurrentSession().Return(current, nil)
+			id := "$1"
+			if current == "bridge" {
+				id = "$2"
+			}
+			m.EXPECT().GetCurrentSession().Return(model.TmuxSession{ID: id, ServerGeneration: generation}, nil)
 			m.EXPECT().ListSessions().Return([]*model.TmuxSession{
-				{Name: "local", Path: "/local", Attached: 1},
-				{Name: "bridge", Path: "/bridge", Attached: 1, SSHBridgeIdentity: "ssh/host/work"},
+				{ID: "$1", ServerGeneration: generation, Name: "local", Path: "/local", Attached: 1},
+				{ID: "$2", ServerGeneration: generation, Name: "bridge", Path: "/bridge", Attached: 1, SSHBridgeIdentity: "ssh/host/work"},
 			}, nil)
 			l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
 
@@ -97,6 +132,96 @@ func TestAttachedSessionUsesCallingClientWithMultipleClients(t *testing.T) {
 			} else {
 				require.True(t, found)
 				assert.Equal(t, "local", session.Name)
+			}
+		})
+	}
+}
+
+func TestAttachedSessionFailsClosedOnUnverifiedIdentity(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
+	for _, tt := range []struct {
+		name      string
+		current   model.TmuxSession
+		queryErr  error
+		listErr   error
+		inventory model.TmuxSession
+	}{
+		{name: "ID absent from inventory", current: model.TmuxSession{ID: "$3", Name: "b", ServerGeneration: generation}},
+		{name: "missing current ID", current: model.TmuxSession{Name: "b", ServerGeneration: generation}},
+		{name: "missing current generation", current: model.TmuxSession{ID: "$1", Name: "b"}},
+		{name: "server restarted", current: model.TmuxSession{ID: "$1", Name: "b", ServerGeneration: "102:1700000001:/tmp/tmux-fixture"}},
+		{name: "query failed", queryErr: assert.AnError},
+		{name: "inventory failed", listErr: assert.AnError},
+		{name: "missing inventory generation", current: model.TmuxSession{ID: "$1", ServerGeneration: generation}, inventory: model.TmuxSession{ID: "$1", Name: "a", Attached: 1}},
+		{name: "current no longer attached", current: model.TmuxSession{ID: "$1", ServerGeneration: generation}, inventory: model.TmuxSession{ID: "$1", Name: "a", ServerGeneration: generation}},
+		{name: "marked since inventory", current: model.TmuxSession{ID: "$1", ServerGeneration: generation, SSHBridgeIdentity: "ssh/host/work"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tmux.NewMockTmux(t)
+			row := &model.TmuxSession{ID: "$1", Name: "a", Path: "/path/A", Attached: 1, ServerGeneration: generation}
+			if tt.inventory.ID != "" {
+				row = &tt.inventory
+			}
+			inventory := m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+				row,
+				{ID: "$2", Name: "b", Path: "/path/B", Attached: 1, ServerGeneration: generation},
+			}, tt.listErr).Once()
+			if tt.listErr == nil {
+				m.EXPECT().IsAttached().Return(true).Once()
+				m.EXPECT().GetCurrentSession().Return(tt.current, tt.queryErr).Once().NotBefore(inventory)
+			}
+			l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
+
+			session, found := l.GetAttachedTmuxSession()
+
+			require.False(t, found)
+			require.Equal(t, model.SeshSession{}, session, "never return a namesake or another attached session")
+		})
+	}
+}
+
+func TestAttachedSessionDistinguishesLiteralIDNames(t *testing.T) {
+	const generation = "101:1700000000:/tmp/tmux-fixture"
+	m := tmux.NewMockTmux(t)
+	m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+		{ID: "$0", Name: "other", Path: "/other", Attached: 1, ServerGeneration: generation},
+		{ID: "$1", Name: "$0", Path: "/user", Attached: 1, ServerGeneration: generation},
+	}, nil).Once()
+	m.EXPECT().IsAttached().Return(true).Once()
+	m.EXPECT().GetCurrentSession().Return(model.TmuxSession{ID: "$1", ServerGeneration: generation}, nil).Once()
+	l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
+
+	session, found := l.GetAttachedTmuxSession()
+
+	require.True(t, found)
+	require.Equal(t, "$1", session.TmuxSessionID)
+	require.Equal(t, "$0", session.Name)
+	require.Equal(t, "/user", session.Path)
+}
+
+func TestAttachedSessionOutsideTmuxPreservesSelection(t *testing.T) {
+	for _, marked := range []bool{false, true} {
+		t.Run(fmt.Sprintf("marked=%t", marked), func(t *testing.T) {
+			first := &model.TmuxSession{ID: "$1", Name: "sesh-ssh-user", Path: "/user", Attached: 2}
+			if marked {
+				first.SSHBridgeIdentity = "ssh/host/work"
+			}
+			m := tmux.NewMockTmux(t)
+			m.EXPECT().ListSessions().Return([]*model.TmuxSession{
+				{ID: "$0", Name: "detached"}, first,
+				{ID: "$2", Name: "other", Attached: 1},
+			}, nil).Once()
+			m.EXPECT().IsAttached().Return(false).Once()
+			l := NewLister(model.Config{}, nil, m, nil, nil, nil, nil, nil)
+
+			session, found := l.GetAttachedTmuxSession()
+
+			require.Equal(t, !marked, found)
+			if found {
+				require.Equal(t, "$1", session.TmuxSessionID)
+				require.Equal(t, "/user", session.Path)
+			} else {
+				require.Equal(t, model.SeshSession{}, session)
 			}
 		})
 	}
