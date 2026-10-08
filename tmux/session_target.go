@@ -47,9 +47,7 @@ func VerifyLocalSession(t Tmux, sessionID, serverGeneration string) (model.TmuxS
 }
 
 func sessionIdentityCondition(sessionID, serverGeneration string) (string, error) {
-	digits, found := strings.CutPrefix(sessionID, "$")
-	number, err := strconv.ParseUint(digits, 10, 64)
-	if !found || err != nil || strconv.FormatUint(number, 10) != digits || !validServerGeneration(serverGeneration) {
+	if !validTmuxID(sessionID, "$") || !validServerGeneration(serverGeneration) {
 		return "", errors.New("unverified tmux session identity")
 	}
 	literal := strings.NewReplacer("#", "##", ",", "#,", "}", "#}").Replace(serverGeneration)
@@ -57,14 +55,19 @@ func sessionIdentityCondition(sessionID, serverGeneration string) (string, error
 }
 
 func validWindowID(id string) bool {
-	digits, found := strings.CutPrefix(id, "@")
+	return validTmuxID(id, "@")
+}
+
+func validTmuxID(id, prefix string) bool {
+	digits, found := strings.CutPrefix(id, prefix)
 	number, err := strconv.ParseUint(digits, 10, 64)
 	return found && err == nil && strconv.FormatUint(number, 10) == digits
 }
 
 // sessionCommandArgs guards the original session ID and generation in the
 // operation's own tmux queue. A qualified window ID also guards its relationship
-// to that session; indexes retain their existing meaning for other callers.
+// to that session, and a pane ID guards the full tuple. Indexes retain their
+// existing meaning for other callers.
 func sessionCommandArgs(target string, generation []string, args ...string) ([]string, error) {
 	if len(generation) == 0 {
 		return args, nil
@@ -79,12 +82,19 @@ func sessionCommandArgs(target string, generation []string, args ...string) ([]s
 	}
 	guardTarget := id + ":"
 	if strings.HasPrefix(window, "@") {
+		window, pane, hasPane := strings.Cut(window, ".")
 		if !validWindowID(window) {
 			return nil, errors.New("unverified tmux window identity")
 		}
-		// if-shell permits unresolved targets. Check both IDs so it cannot
+		// if-shell permits unresolved targets. Check the IDs so it cannot
 		// authorize its current/default window when the tuple disappears.
 		condition = "#{&&:" + condition + ",#{==:#{window_id}," + window + "}}"
+		if hasPane {
+			if !validTmuxID(pane, "%") {
+				return nil, errors.New("unverified tmux pane identity")
+			}
+			condition = "#{&&:" + condition + ",#{==:#{pane_id}," + pane + "}}"
+		}
 		guardTarget = target
 	}
 	command := make([]string, len(args))

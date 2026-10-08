@@ -149,3 +149,32 @@ func TestVerifiedWindowCommandsRejectUnknownIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestCreatedPaneSendKeysCarriesFullIdentity(t *testing.T) {
+	const generation = "101:1700000000:/tmp/socket"
+	const condition = "#{&&:#{&&:#{&&:#{==:#{session_id},$1},#{==:#{pid}:#{start_time}:#{socket_path},#{l:101:1700000000:/tmp/socket}}},#{==:#{window_id},@7}},#{==:#{pane_id},%6}}"
+	for _, commandErr := range []error{nil, assert.AnError} {
+		s := shell.NewMockShell(t)
+		s.EXPECT().CmdCapture("custom-tmux", "if-shell", "-F", "-t", "$1:@7.%6", condition,
+			"'send-keys' '-t' '$1:@7.%6' 'script' 'Enter'", "if-shell").Return("", commandErr).Once()
+		_, err := NewTmux(nil, s, "custom-tmux").SendKeys("$1:@7.%6", "script", generation)
+		require.ErrorIs(t, err, commandErr)
+	}
+}
+
+func TestCreatedPaneSendKeysRejectsUnverifiableIdentity(t *testing.T) {
+	for _, target := range []string{
+		"@7.%6", "$01:@7.%6", "$1:@07.%6", "$1:@7.", "$1:@7.0",
+		"$1:@7.%", "$1:@7.%06", "$1:@7.%name", "$1:@7.%-6",
+		"$1:@7.%6.extra", "$1:@7.%18446744073709551616",
+	} {
+		t.Run(target, func(t *testing.T) {
+			_, err := NewTmux(nil, shell.NewMockShell(t), "custom-tmux").SendKeys(target, "script", "101:1700000000:/tmp/socket")
+			require.Error(t, err)
+		})
+	}
+	for _, generation := range []string{"", "unknown", "101:0:/tmp/socket"} {
+		_, err := NewTmux(nil, shell.NewMockShell(t), "custom-tmux").SendKeys("$1:@7.%6", "script", generation)
+		require.Error(t, err)
+	}
+}

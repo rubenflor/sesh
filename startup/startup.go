@@ -37,6 +37,10 @@ func (s *RealStartup) Exec(session model.SeshSession, sessionID string) (string,
 	}
 
 	windows := make(model.SeshWindowMap)
+	var generation []string
+	if session.TmuxServerGeneration != "" {
+		generation = []string{session.TmuxServerGeneration}
+	}
 	for _, window := range s.config.WindowConfigs {
 		key := lister.ConfigKey(window.Name)
 		var path string = ""
@@ -69,15 +73,19 @@ func (s *RealStartup) Exec(session model.SeshSession, sessionID string) (string,
 		}
 
 		// create the new window
-		if ret, err := s.tmux.NewWindowInSession(model.TmuxWindowOpts{
+		pane, err := s.tmux.NewWindowPaneInSession(model.TmuxWindowOpts{
 			Name:          windowConfig.Name,
 			StartDir:      windowConfig.Path,
 			TargetSession: sessionID,
-		}); err != nil {
-			return ret, err
+		}, generation...)
+		if err != nil {
+			return "", err
 		}
-		if ret, err := s.tmux.SendKeys(sessionID, windowConfig.StartupScript); err != nil {
-			return ret, err
+		if windowConfig.StartupScript != "" {
+			target := pane.SessionID + ":" + pane.WindowID + "." + pane.PaneID
+			if ret, err := s.tmux.SendKeys(target, windowConfig.StartupScript, pane.ServerGeneration); err != nil {
+				return ret, err
+			}
 		}
 	}
 	s.tmux.NextWindowInSession(sessionID)

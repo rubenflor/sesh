@@ -23,6 +23,7 @@ type Tmux interface {
 	GetSessionEnvironment(targetSession string, name string) (string, error)
 	IsPaneDead(targetSession string) (bool, error)
 	NewWindowInSession(opts model.TmuxWindowOpts, serverGeneration ...string) (string, error)
+	NewWindowPaneInSession(opts model.TmuxWindowOpts, serverGeneration ...string) (model.TmuxPane, error)
 	IsAttached() bool
 	AttachSession(targetSession string, serverGeneration ...string) (string, error)
 	SendKeys(name string, command string, serverGeneration ...string) (string, error)
