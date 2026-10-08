@@ -24,7 +24,7 @@ func TestVerifiedSessionCommandsCarryGeneration(t *testing.T) {
 			return err
 		}},
 		{"send keys", "custom-tmux", "'send-keys' '-t' '$1:4' 'command' 'Enter'", func(tm *RealTmux) error { _, err := tm.SendKeys("$1:4", "command", generation); return err }},
-		{"select window", "tmux", "'select-window' '-t' '$1:4'", func(tm *RealTmux) error { _, err := tm.SelectWindow("$1:4", generation); return err }},
+		{"select window", "custom-tmux", "'select-window' '-t' '$1:4'", func(tm *RealTmux) error { _, err := tm.SelectWindow("$1:4", generation); return err }},
 		{"switch", "custom-tmux", "'switch-client' '-t' '$1'", func(tm *RealTmux) error { _, err := tm.SwitchClient("$1", generation); return err }},
 		{"switch client", "custom-tmux", "'switch-client' '-c' 'client' '-t' '$1'", func(tm *RealTmux) error { _, err := tm.SwitchClientTarget("client", "$1", generation); return err }},
 	} {
@@ -105,7 +105,7 @@ func TestVerifiedWindowCommandsCarryIdentity(t *testing.T) {
 		run                func(*RealTmux) error
 	}{
 		{"input", "custom-tmux", "'send-keys' '-t' '$1:@7' 'command' 'Enter'", false, func(tm *RealTmux) error { _, err := tm.SendKeys("$1:@7", "command", generation); return err }},
-		{"selection", "tmux", "'select-window' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.SelectWindow("$1:@7", generation); return err }},
+		{"selection", "custom-tmux", "'select-window' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.SelectWindow("$1:@7", generation); return err }},
 		{"background verification", "custom-tmux", "'capture-pane' '-e' '-p' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.CapturePane("$1:@7", generation); return err }},
 		{"switch", "custom-tmux", "'switch-client' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.SwitchClient("$1:@7", generation); return err }},
 		{"explicit client", "custom-tmux", "'switch-client' '-c' 'client' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.SwitchClientTarget("client", "$1:@7", generation); return err }},
