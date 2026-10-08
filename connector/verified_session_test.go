@@ -55,15 +55,17 @@ func TestWindowConnectUsesVerifiedSessionID(t *testing.T) {
 				{Name: "bridge", ID: "$2", SSHBridgeIdentity: "ssh/host/work"},
 			}, nil).Once()
 			var windows []*model.TmuxWindow
+			focusTarget := "$8"
 			if reuse {
-				windows = []*model.TmuxWindow{{Name: "notes", Index: 4}}
-				m.EXPECT().SendKeys("$8:4", "command", existingSessionGeneration).Return("", nil).Once()
-				m.EXPECT().SelectWindow("$8:4", existingSessionGeneration).Return("", nil).Once()
+				windows = []*model.TmuxWindow{{ID: "@7", ServerGeneration: existingSessionGeneration, Name: "notes", Index: 4}}
+				m.EXPECT().SendKeys("$8:@7", "command", existingSessionGeneration).Return("", nil).Once()
+				m.EXPECT().SelectWindow("$8:@7", existingSessionGeneration).Return("", nil).Once()
+				focusTarget = "$8:@7"
 			} else {
 				m.EXPECT().NewWindowInSession(model.TmuxWindowOpts{Name: "notes", StartDir: "/user", TargetSession: "$8", Command: "command"}, existingSessionGeneration).Return("$2:4", nil).Once()
 			}
 			m.EXPECT().ListWindows("$8", existingSessionGeneration).Return(windows, nil).Once()
-			m.EXPECT().SwitchOrAttach("$8", model.ConnectOpts{}, existingSessionGeneration).Return("", nil).Once()
+			m.EXPECT().SwitchOrAttach(focusTarget, model.ConnectOpts{}, existingSessionGeneration).Return("", nil).Once()
 			c := &RealConnector{tmux: m, lister: li, zoxide: zo}
 
 			target, err := c.ConnectWindow(model.WindowConnectOpts{Session: "$2", Name: "notes", Path: "/user", Command: "command"})

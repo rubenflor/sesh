@@ -46,11 +46,11 @@ func TestVerifiedSessionCommandsCarryGeneration(t *testing.T) {
 				_, err := tm.AttachSession("$1", generation)
 				require.ErrorIs(t, err, assert.AnError)
 			} else {
-				s.EXPECT().ListCmd("custom-tmux", "if-shell", "-F", "-t", "$1:", condition,
-					"'list-windows' '-t' '$1' '-F' '#{window_index}::#{window_name}::#{pane_current_path}::#{window_active}'", "if-shell").Return([]string{"4::notes::/original::1"}, nil).Once()
+				s.EXPECT().ListCmd("custom-tmux", "-u", "if-shell", "-F", "-t", "$1:", condition,
+					"'list-windows' '-t' '$1' '-F' '"+testWindowInventoryFormat+"'", "if-shell").Return([]string{windowInventoryRow(model.TmuxWindow{ID: "@7", ServerGeneration: generation, Index: 4, Name: "notes", Path: "/original", Active: true})}, nil).Once()
 				windows, err := tm.ListWindows("$1", generation)
 				require.NoError(t, err)
-				require.Equal(t, []*model.TmuxWindow{{Index: 4, Name: "notes", Path: "/original", Active: true}}, windows)
+				require.Equal(t, []*model.TmuxWindow{{ID: "@7", ServerGeneration: generation, Index: 4, Name: "notes", Path: "/original", Active: true}}, windows)
 			}
 		})
 	}
@@ -91,6 +91,60 @@ func TestSessionGenerationCommandsRejectUnknownIdentity(t *testing.T) {
 			_, err := VerifyLocalSession(tm, identity.id, identity.generation)
 			require.Error(t, err)
 			_, err = tm.RenameSession(identity.id, "new", identity.generation)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestVerifiedWindowCommandsCarryIdentity(t *testing.T) {
+	const generation = "101:1700000000:/tmp/socket"
+	const condition = "#{&&:#{&&:#{==:#{session_id},$1},#{==:#{pid}:#{start_time}:#{socket_path},#{l:101:1700000000:/tmp/socket}}},#{==:#{window_id},@7}}"
+	for _, operation := range []struct {
+		name, bin, command string
+		interactive        bool
+		run                func(*RealTmux) error
+	}{
+		{"input", "custom-tmux", "'send-keys' '-t' '$1:@7' 'command' 'Enter'", false, func(tm *RealTmux) error { _, err := tm.SendKeys("$1:@7", "command", generation); return err }},
+		{"selection", "tmux", "'select-window' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.SelectWindow("$1:@7", generation); return err }},
+		{"background verification", "custom-tmux", "'capture-pane' '-e' '-p' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.CapturePane("$1:@7", generation); return err }},
+		{"switch", "custom-tmux", "'switch-client' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.SwitchClient("$1:@7", generation); return err }},
+		{"explicit client", "custom-tmux", "'switch-client' '-c' 'client' '-t' '$1:@7'", false, func(tm *RealTmux) error { _, err := tm.SwitchClientTarget("client", "$1:@7", generation); return err }},
+		{"attach", "custom-tmux", "'attach-session' '-t' '$1:@7'", true, func(tm *RealTmux) error { _, err := tm.AttachSession("$1:@7", generation); return err }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			for _, commandErr := range []error{nil, assert.AnError} {
+				s := shell.NewMockShell(t)
+				tm := &RealTmux{shell: s, bin: "custom-tmux"}
+				if operation.interactive {
+					s.EXPECT().CmdWithOutput(operation.bin, "if-shell", "-F", "-t", "$1:@7", condition, operation.command, "if-shell").Return("", commandErr).Once()
+				} else {
+					s.EXPECT().CmdCapture(operation.bin, "if-shell", "-F", "-t", "$1:@7", condition, operation.command, "if-shell").Return("", commandErr).Once()
+				}
+				require.ErrorIs(t, operation.run(tm), commandErr)
+			}
+		})
+	}
+}
+
+func TestVerifiedWindowCommandsRejectUnknownIdentity(t *testing.T) {
+	for _, identity := range []struct{ target, generation string }{
+		{"$1:@", "101:1700000000:/tmp/socket"},
+		{"$1:@01", "101:1700000000:/tmp/socket"},
+		{"$1:@name", "101:1700000000:/tmp/socket"},
+		{"$1:@-1", "101:1700000000:/tmp/socket"},
+		{"$1:@7.0", "101:1700000000:/tmp/socket"},
+		{"$1:@18446744073709551616", "101:1700000000:/tmp/socket"},
+		{"@7", "101:1700000000:/tmp/socket"},
+		{"$01:@7", "101:1700000000:/tmp/socket"},
+		{"$1:@7", ""}, {"$1:@7", "unknown"},
+	} {
+		t.Run(identity.target+"/"+identity.generation, func(t *testing.T) {
+			tm := &RealTmux{shell: shell.NewMockShell(t), bin: "custom-tmux"}
+			_, err := tm.SendKeys(identity.target, "command", identity.generation)
+			require.Error(t, err)
+			_, err = tm.SelectWindow(identity.target, identity.generation)
+			require.Error(t, err)
+			_, err = tm.AttachSession(identity.target, identity.generation)
 			require.Error(t, err)
 		})
 	}

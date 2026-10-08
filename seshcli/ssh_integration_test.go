@@ -217,8 +217,8 @@ func TestSSHIntegrationBridgeMetadataNoLeak(t *testing.T) {
 			assert.Empty(t, out.String())
 		})
 	}
-	s.On("ListCmd", "tmux", "if-shell", "-F", "-t", "$2:", mock.Anything,
-		"'list-windows' '-t' '$2' '-F' '#{window_index}::#{window_name}::#{pane_current_path}::#{window_active}'", "if-shell").
+	s.On("ListCmd", "tmux", "-u", "if-shell", "-F", "-t", "$2:", mock.Anything,
+		"'list-windows' '-t' '$2' '-F' '#{window_id}::#{window_index}::#{window_active}::#{n:window_name}::#{n:pane_current_path}::#{n:#{pid}:#{start_time}:#{socket_path}}::#{window_name}#{pane_current_path}#{pid}:#{start_time}:#{socket_path}'", "if-shell").
 		Return([]string{}, nil).Once()
 	root := &cobra.Command{Use: "sesh"}
 	root.PersistentFlags().String("config", configPath, "")

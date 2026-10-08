@@ -56,8 +56,15 @@ func sessionIdentityCondition(sessionID, serverGeneration string) (string, error
 	return "#{&&:#{==:#{session_id}," + sessionID + "},#{==:" + serverGenerationFormat + ",#{l:" + literal + "}}}", nil
 }
 
+func validWindowID(id string) bool {
+	digits, found := strings.CutPrefix(id, "@")
+	number, err := strconv.ParseUint(digits, 10, 64)
+	return found && err == nil && strconv.FormatUint(number, 10) == digits
+}
+
 // sessionCommandArgs guards the original session ID and generation in the
-// operation's own tmux queue. Window indexes remain unchanged by this guard.
+// operation's own tmux queue. A qualified window ID also guards its relationship
+// to that session; indexes retain their existing meaning for other callers.
 func sessionCommandArgs(target string, generation []string, args ...string) ([]string, error) {
 	if len(generation) == 0 {
 		return args, nil
@@ -65,10 +72,20 @@ func sessionCommandArgs(target string, generation []string, args ...string) ([]s
 	if len(generation) != 1 {
 		return nil, errors.New("unverified tmux session identity")
 	}
-	id, _, _ := strings.Cut(target, ":")
+	id, window, _ := strings.Cut(target, ":")
 	condition, err := sessionIdentityCondition(id, generation[0])
 	if err != nil {
 		return nil, err
+	}
+	guardTarget := id + ":"
+	if strings.HasPrefix(window, "@") {
+		if !validWindowID(window) {
+			return nil, errors.New("unverified tmux window identity")
+		}
+		// if-shell permits unresolved targets. Check both IDs so it cannot
+		// authorize its current/default window when the tuple disappears.
+		condition = "#{&&:" + condition + ",#{==:#{window_id}," + window + "}}"
+		guardTarget = target
 	}
 	command := make([]string, len(args))
 	for i, arg := range args {
@@ -76,7 +93,7 @@ func sessionCommandArgs(target string, generation []string, args ...string) ([]s
 	}
 	// tmux has no standalone error command. A missing required argument to
 	// if-shell makes rejection fail even when attach streams terminal output.
-	return []string{"if-shell", "-F", "-t", id + ":", condition, strings.Join(command, " "), "if-shell"}, nil
+	return []string{"if-shell", "-F", "-t", guardTarget, condition, strings.Join(command, " "), "if-shell"}, nil
 }
 
 func (t *RealTmux) sessionCommand(bin, target string, generation []string, args ...string) (string, error) {

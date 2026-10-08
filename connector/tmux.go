@@ -73,7 +73,13 @@ func (c *RealConnector) connectDetached(sessionName string, serverGeneration ...
 	// attach.
 	if len(clients) == 0 {
 		if len(serverGeneration) != 0 {
-			if _, err := tmux.VerifyLocalSession(c.tmux, sessionName, serverGeneration[0]); err != nil {
+			if strings.Contains(sessionName, ":@") {
+				// Window reuse carries its full tuple even when only terminal
+				// activation is possible; recheck it before that side effect.
+				if _, err := c.tmux.SelectWindow(sessionName, serverGeneration...); err != nil {
+					return "", err
+				}
+			} else if _, err := tmux.VerifyLocalSession(c.tmux, sessionName, serverGeneration[0]); err != nil {
 				return "", err
 			}
 		}

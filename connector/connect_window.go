@@ -3,12 +3,13 @@ package connector
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/joshmedeski/sesh/v2/model"
 )
 
 // ConnectWindow selects the named window in the target session, creating it
-// when it isn't there. It returns the window's "session:index" target.
+// when it isn't there. It returns the window's public "session:index" label.
 //
 // An unnamed window has nothing to match on, so it is always created. So is one
 // asked for with opts.New, which allows windows to share a name; a later
@@ -45,10 +46,19 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 			if window.Name != name {
 				continue
 			}
-			// Target by index: a name shared with a session resolves
-			// ambiguously (see #280), an index never does.
-			target := fmt.Sprintf("%s:%d", sessionID, window.Index)
-			if _, err := c.reuseWindow(sessionID, target, opts, generation...); err != nil {
+			if !strings.HasPrefix(window.ID, "@") {
+				return "", fmt.Errorf("window %q has no server-assigned ID", name)
+			}
+			if window.ServerGeneration == "" || (len(generation) != 0 && window.ServerGeneration != generation[0]) {
+				return "", fmt.Errorf("window %q has a missing or changed server generation", name)
+			}
+			if len(generation) == 0 {
+				// A newly started session can already have configured windows.
+				// Bind reuse to the lifetime that supplied this existing window.
+				generation = []string{window.ServerGeneration}
+			}
+			target := sessionID + ":" + window.ID
+			if _, err := c.reuseWindow(target, opts, generation...); err != nil {
 				return "", err
 			}
 			return fmt.Sprintf("%s:%d", session.Name, window.Index), nil
@@ -78,10 +88,16 @@ func (c *RealConnector) ConnectWindow(opts model.WindowConnectOpts) (string, err
 // reuseWindow drops a command into a window that already exists. The window
 // already has a running process, so the command goes in as keystrokes rather
 // than becoming the pane's process the way it does on create.
-func (c *RealConnector) reuseWindow(sessionName string, target string, opts model.WindowConnectOpts, serverGeneration ...string) (string, error) {
+func (c *RealConnector) reuseWindow(target string, opts model.WindowConnectOpts, serverGeneration ...string) (string, error) {
 	if opts.Command != "" {
 		if _, err := c.tmux.SendKeys(target, opts.Command, serverGeneration...); err != nil {
 			return "", fmt.Errorf("failed to send command to '%s': %w", target, err)
+		}
+	} else if opts.Background {
+		// Even a no-op reuse must reject a vanished or moved selection. This
+		// guarded read verifies the tuple without changing window focus.
+		if _, err := c.tmux.CapturePane(target, serverGeneration...); err != nil {
+			return "", fmt.Errorf("failed to verify window '%s': %w", target, err)
 		}
 	}
 	if opts.Background {
@@ -90,7 +106,7 @@ func (c *RealConnector) reuseWindow(sessionName string, target string, opts mode
 	if _, err := c.tmux.SelectWindow(target, serverGeneration...); err != nil {
 		return "", fmt.Errorf("failed to select window '%s': %w", target, err)
 	}
-	if _, err := c.focusSession(sessionName, opts.Switch, serverGeneration...); err != nil {
+	if _, err := c.focusSession(target, opts.Switch, serverGeneration...); err != nil {
 		return "", err
 	}
 	return target, nil
