@@ -20,7 +20,7 @@ type sessionItem struct {
 	session    model.SeshSession
 	name       string // raw session name (no icons/ANSI)
 	searchName string // normalized name used for fuzzy matching
-	src        string // source type (tmux, config, zoxide, tmuxinator)
+	src        string // source type (ssh, tmux, config, zoxide, tmuxinator)
 	icon       string // custom icon from config, "" to use the source glyph
 }
 
@@ -171,9 +171,10 @@ type Options struct {
 }
 
 type Model struct {
-	allItems    sessionItems
-	filtered    []filteredItem
-	filterInput textinput.Model
+	allItems     sessionItems
+	filtered     []filteredItem
+	filterInput  textinput.Model
+	sourceFilter string // empty means every source loaded for this invocation
 	// cursor indexes filtered; offset indexes rows, which is the same list with
 	// the group separators laid in, so scrolling counts the lines actually
 	// drawn.
@@ -358,8 +359,10 @@ func normalizeSeparators(s string) string {
 
 func buildItems(sessions model.SeshSessions, separatorAware bool, resolveIcon IconFunc) sessionItems {
 	items := make(sessionItems, 0, len(sessions.OrderedIndex))
+	hasSSH := false
 	for _, key := range sessions.OrderedIndex {
 		s := sessions.Directory[key]
+		hasSSH = hasSSH || s.Src == "ssh"
 		searchName := s.Name
 		if separatorAware {
 			searchName = normalizeSeparators(s.Name)
@@ -374,6 +377,13 @@ func buildItems(sessions model.SeshSessions, separatorAware bool, resolveIcon Ic
 			searchName: searchName,
 			src:        s.Src,
 			icon:       icn,
+		})
+	}
+	if hasSSH {
+		// This is picker presentation only; the lister's order and groups remain intact.
+		priority := map[string]int{"ssh": 2, "tmux": 1}
+		sort.SliceStable(items, func(i, j int) bool {
+			return priority[items[i].src] > priority[items[j].src]
 		})
 	}
 	return items
@@ -599,6 +609,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+x":
 			return m.startRemove()
 
+		case "ctrl+s":
+			if m.loading {
+				return m, nil
+			}
+			m.cycleSource()
+			m.applyFilter()
+			m.cursor, m.offset = 0, 0
+			m.aliasSeq++
+			return m, m.schedulePreview()
+
 		case "ctrl+o":
 			// Toggling stays allowed on a narrow terminal: the pane is gated on
 			// width at render time, so it appears once the window has room.
@@ -670,10 +690,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) exactAlias(raw string) (Alias, bool) {
 	if query, ok := m.aliasFilterQuery(raw); ok {
 		alias, found := m.aliases[strings.ToLower(query)]
+		if found {
+			_, found = m.aliasMatch(query)
+		}
 		return alias, found
 	}
 	alias, found := m.aliases[strings.ToLower(raw)]
 	if !found || !alias.AutoConnect {
+		return Alias{}, false
+	}
+	if _, allowed := m.aliasMatch(raw); !allowed {
 		return Alias{}, false
 	}
 	return alias, true
@@ -708,17 +734,19 @@ func (m *Model) scheduleAliasAutoConnect() tea.Cmd {
 //
 // The session is looked up in the loaded list so its source and window names
 // come along, and falls back to a config-sourced item when the target isn't
-// listed — an alias always names a [[session]], so connecting still works even
-// if that session is filtered out or hasn't loaded yet.
+// listed. Unlisted config aliases remain reachable in All or config mode.
 func (m *Model) aliasMatch(raw string) (sessionItem, bool) {
 	alias, ok := m.aliases[strings.ToLower(raw)]
 	if !ok {
 		return sessionItem{}, false
 	}
 	for _, item := range m.allItems {
-		if item.name == alias.Target {
+		if item.name == alias.Target && m.sourceMatches(item.src) {
 			return item, true
 		}
+	}
+	if !m.sourceMatches("config") {
+		return sessionItem{}, false
 	}
 	return m.configItem(alias.Target), true
 }
@@ -744,17 +772,15 @@ func (m *Model) aliasFilterQuery(raw string) (string, bool) {
 }
 
 // aliasCandidates returns every aliased session as a row, in list order.
-// Aliases whose target isn't in the loaded list still appear — an alias always
-// names a [[session]], so it must remain reachable even when that session is
-// filtered out or hasn't started yet. Those trail the listed ones, sorted by
-// alias so the order doesn't shift between runs.
+// Unlisted config aliases still appear in All or config mode, trailing the
+// listed ones and sorted by alias so the order doesn't shift between runs.
 func (m *Model) aliasCandidates() []sessionItem {
 	candidates := make([]sessionItem, 0, len(m.aliases))
 	listed := make(map[string]bool, len(m.aliases))
 
 	for _, item := range m.allItems {
 		alias, ok := m.aliasByName[item.name]
-		if !ok {
+		if !ok || !m.sourceMatches(item.src) {
 			continue
 		}
 		listed[strings.ToLower(alias)] = true
@@ -769,7 +795,9 @@ func (m *Model) aliasCandidates() []sessionItem {
 	}
 	sort.Strings(missing)
 	for _, key := range missing {
-		candidates = append(candidates, m.configItem(m.aliases[key].Target))
+		if m.sourceMatches("config") {
+			candidates = append(candidates, m.configItem(m.aliases[key].Target))
+		}
 	}
 
 	return candidates
@@ -838,18 +866,54 @@ func (m *Model) applyFilter() {
 	m.buildRows()
 }
 
+func (m *Model) sourceMatches(src string) bool {
+	return m.sourceFilter == "" || m.sourceFilter == src
+}
+
+// cycleSource uses the same categories as the CLI source flags, without refetching.
+func (m *Model) cycleSource() {
+	sources := []string{"", "ssh", "tmux", "config", "zoxide", "tmuxinator"}
+	current := 0
+	for i, src := range sources {
+		if src == m.sourceFilter {
+			current = i
+			break
+		}
+	}
+	for step := 1; step <= len(sources); step++ {
+		next := sources[(current+step)%len(sources)]
+		if next == "" {
+			m.sourceFilter = next
+			return
+		}
+		for _, item := range m.allItems {
+			if item.src == next {
+				m.sourceFilter = next
+				return
+			}
+		}
+	}
+}
+
 // filterFor narrows the loaded list for the raw input, dispatching on the sigil
 // it was typed with.
 func (m *Model) filterFor(raw string) []filteredItem {
+	var filtered []filteredItem
 	if query, ok := m.aliasFilterQuery(raw); ok {
-		return m.filterAliases(query)
+		filtered = m.filterAliases(query)
+	} else if query, ok := m.indexFilterQuery(raw); ok {
+		// Index mode still ranks the query as an ordinary search.
+		filtered = m.filterSessions(query)
+	} else {
+		filtered = m.filterSessions(raw)
 	}
-	// Index mode numbers whatever is displayed, so anything typed after the
-	// sigil filters exactly as it would on its own.
-	if query, ok := m.indexFilterQuery(raw); ok {
-		return m.filterSessions(query)
+	visible := filtered[:0]
+	for _, item := range filtered {
+		if m.sourceMatches(item.item.src) {
+			visible = append(visible, item)
+		}
 	}
-	return m.filterSessions(raw)
+	return visible
 }
 
 // buildRows lays the filtered sessions out as the lines the list renders,
@@ -941,8 +1005,8 @@ const maxUnmatchedCharPenalty = 5
 //
 // Matches must come in unsorted (fuzzy.FindFromNoSort), so they arrive in
 // session-list order. The sort is stable, so equally scored matches keep that
-// order — which is the order the picker shows with an empty query, tmux
-// sessions first.
+// order — which is the order the picker shows with an empty query, SSH above
+// tmux when remote sessions are present.
 func rankMatches(matches fuzzy.Matches) fuzzy.Matches {
 	ranked := make([]struct {
 		match fuzzy.Match
@@ -1002,8 +1066,7 @@ func (m *Model) scrollToCursor() {
 const fallbackVisibleCount = 5
 
 // visibleCount is how many session rows fit. The picker runs on the alt screen,
-// so it gets every row the terminal has apart from the filter row and the blank
-// line under it.
+// so it gets every row the terminal has apart from the query and source hint.
 func (m Model) visibleCount() int {
 	available := m.height - headerLines
 	if available < 1 {
@@ -1097,6 +1160,12 @@ func (m Model) View() tea.View {
 	// moves the list.
 	if m.status != "" {
 		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(3)).Render("  " + m.status))
+	} else {
+		source := strings.ToUpper(m.sourceFilter)
+		if source == "" {
+			source = "ALL"
+		}
+		b.WriteString(lipgloss.NewStyle().Faint(true).Render("  Source: " + source + " · Ctrl-s"))
 	}
 	b.WriteString("\n")
 
@@ -1229,9 +1298,14 @@ const headerLines = 2
 // highlighted session clipped to the pane.
 func (m Model) previewView(cols, rows int) string {
 	faint := lipgloss.NewStyle().Faint(true)
+	_, highlighted := m.highlightedSession()
 
 	var body string
 	switch {
+	case !highlighted:
+		body = faint.Render("No preview")
+	case !m.previewMatches(m.previewTarget):
+		body = faint.Render("Loading preview...")
 	case m.previewErr != nil:
 		// A broken preview_command shouldn't take the picker down with it.
 		body = faint.Render(fmt.Sprintf("Preview unavailable: %v", m.previewErr))

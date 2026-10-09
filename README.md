@@ -1031,6 +1031,14 @@ A query that matches a single session doesn't connect on its own; the picker ope
 
 This is per-invocation only, with no `[tui]` equivalent: a default query would silently hide sessions on every launch.
 
+#### Filtering by source
+
+Press <kbd>ctrl+s</kbd> to cycle All → SSH → tmux → config → zoxide → tmuxinator → All. The picker skips sources with no loaded entries and shows the active source below the query. Changing sources keeps your query and starts at the first matching row; All restores the entries loaded for this invocation. Launch flags such as `--ssh` and `--tmux` still limit which sources are loaded.
+
+With an empty query, SSH sessions appear immediately above local tmux sessions, followed by the other sources in their existing order. Each source keeps its original session order, and local-only lists retain their existing layout. Typing a query ranks matches by search relevance across the selected sources; SSH only takes priority when scores tie. This presentation order applies to the native picker; `sesh list` keeps its configured order.
+
+Remote rows retain their canonical `ssh/<host>/<session>` names. Pressing Enter uses the existing SSH connection path. Remote preview behavior is unchanged.
+
 #### Jumping by number
 
 Typing `#` as the first character numbers the rows and turns the next digit into a jump — the fastest way to reach one of your first few sessions without reading their names:

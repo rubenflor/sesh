@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/joshmedeski/sesh/v2/connector"
 	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/lister"
@@ -28,10 +30,17 @@ func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
 	const identity = "ssh/first/nutiliti%2F2345%25%20caf%C3%A9"
 	mockPicker := picker.NewMockPicker(t)
 	mockPicker.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, _ picker.PickerOptions) (model.SeshSession, error) {
-		sessions, err := fetch()
-		require.NoError(t, err)
-		require.Len(t, sessions.OrderedIndex, 1)
-		selected := sessions.Directory[sessions.OrderedIndex[0]]
+		// Exercise the native model through load, SSH filtering, and Enter before
+		// handing the selected row to the real connector below.
+		m := picker.New(fetch, picker.Options{})
+		initial := m.Init()().(tea.BatchMsg)
+		for _, command := range initial {
+			updated, _ := m.Update(command())
+			m = updated.(picker.Model)
+		}
+		filtered, _ := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+		chosen, _ := filtered.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		selected := chosen.(picker.Model).ChosenSession()
 		assert.Equal(t, "ssh", selected.Src)
 		assert.Equal(t, identity, selected.Name)
 		assert.Empty(t, selected.Path)

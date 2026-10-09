@@ -1665,8 +1665,8 @@ func TestPreview_AlreadyPreviewedSessionIsNotRefetched(t *testing.T) {
 	m = loadPreview(t, result.(Model), cmd)
 	before := len(*asked)
 
-	// Move away, then straight back before the new preview lands: the pane is
-	// still showing dotfiles, so there is nothing to fetch.
+	// Move away, then back before the new preview lands: the cached dotfiles
+	// content can be shown immediately without another fetch.
 	result, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = result.(Model)
 	fetch := previewFetch(cmd)
@@ -1726,7 +1726,7 @@ func TestPreview_StaleFetchTickIsDiscarded(t *testing.T) {
 	assert.False(t, result.(Model).loading)
 }
 
-func TestPreview_KeepsPreviousContentWhileLoading(t *testing.T) {
+func TestPreview_RetainsButHidesPreviousContentWhileLoading(t *testing.T) {
 	m, _ := previewModel()
 	result, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = loadPreview(t, result.(Model), cmd)
@@ -1736,6 +1736,13 @@ func TestPreview_KeepsPreviousContentWhileLoading(t *testing.T) {
 	m = result.(Model)
 
 	assert.Equal(t, "preview of dotfiles", m.previewContent)
+	assert.NotContains(t, m.View().Content, "preview of dotfiles")
+	assert.Contains(t, m.View().Content, "Loading preview...")
+
+	// Returning to the same identity still reuses the hidden cached content.
+	result, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	m = result.(Model)
+	assert.Nil(t, previewFetch(cmd))
 	assert.Contains(t, m.View().Content, "preview of dotfiles")
 }
 

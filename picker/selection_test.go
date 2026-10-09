@@ -251,8 +251,17 @@ func TestPickerPreviewSameNameTargetChanges(t *testing.T) {
 						return "CURRENT_OUTPUT", nil
 					}
 				}))
+				m.width, m.height = 120, 24
 				loaded, cmd := m.Update(sessionsLoadedMsg{sessions: sessions})
 				m = loaded.(Model)
+				// SSH now sorts first; keep exercising the original transition direction.
+				for i, item := range m.filtered {
+					if previewTargetFor(item.item.session) == previewTargetFor(from) && i != m.cursor {
+						m.cursor = i
+						cmd = m.schedulePreview()
+						break
+					}
+				}
 				fetch := previewFetch(cmd)
 				require.NotNil(t, fetch)
 				started, run := m.Update(*fetch)
@@ -266,9 +275,15 @@ func TestPickerPreviewSameNameTargetChanges(t *testing.T) {
 					require.Equal(t, "OLD_OUTPUT", m.previewContent)
 				}
 
-				moved, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+				key := tea.KeyDown
+				if m.cursor == 1 {
+					key = tea.KeyUp
+				}
+				moved, cmd := m.Update(tea.KeyPressMsg{Code: key})
 				m = moved.(Model)
 				require.Equal(t, oldSeq+1, m.previewSeq)
+				require.NotContains(t, m.View().Content, "OLD_OUTPUT", "same display Name does not authorize another identity's content")
+				require.Contains(t, m.View().Content, "Loading preview...")
 				m = loadPreview(t, m, cmd)
 				require.Equal(t, []model.SeshSession{from, target}, asked)
 				completed, _ := m.Update(oldResult)
@@ -296,6 +311,7 @@ func TestPickerPreviewExactTargetIsReused(t *testing.T) {
 					return "SAME_TARGET_OUTPUT", nil
 				}
 			}))
+			m.width, m.height = 120, 24
 			loaded, cmd := m.Update(sessionsLoadedMsg{sessions: sessions})
 			m = loaded.(Model)
 			seq := m.previewSeq
@@ -315,6 +331,7 @@ func TestPickerPreviewExactTargetIsReused(t *testing.T) {
 			require.Nil(t, reused, "the exact loaded identity remains reusable")
 			require.Equal(t, seq, m.previewSeq)
 			require.Equal(t, "SAME_TARGET_OUTPUT", m.previewContent)
+			require.Contains(t, m.View().Content, "SAME_TARGET_OUTPUT", "the same local ID/generation remains valid after a display rename")
 			require.Equal(t, 1, calls)
 		})
 	}

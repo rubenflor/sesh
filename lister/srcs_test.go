@@ -47,6 +47,15 @@ func TestSortSources(t *testing.T) {
 	}
 }
 
+func TestSortSourcesSSHDoesNotAdoptPickerPriority(t *testing.T) {
+	sources := srcs(ListOptions{}, true)
+	assert.Equal(t, []string{"tmux", "config", "tmuxinator", "zoxide", "ssh"}, sortSources(sources, nil),
+		"SSH ordering in the picker must not change the default CLI source order")
+	assert.Equal(t, []string{"config", "zoxide", "tmux", "ssh", "tmuxinator"},
+		sortSources(sources, model.SortOrder{"config", "zoxide", "tmux", "ssh", "tmuxinator"}),
+		"CLI listing must continue honoring configured source order")
+}
+
 func TestGroupSources(t *testing.T) {
 	defaultSources := []string{"tmux", "config", "tmuxinator", "zoxide"}
 	tests := map[string]struct {
