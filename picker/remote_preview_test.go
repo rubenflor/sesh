@@ -295,6 +295,10 @@ func TestSSHRemotePreviewCacheAndLocalSwitching(t *testing.T) {
 	p := &RealPicker{config: model.Config{SSH: model.SSHConfig{Hosts: []string{"alpha", "beta"}}},
 		shell: sh, tmux: tm, previewer: previewer.NewMockPreviewer(t)}
 	m := loadedSourcePreview(t, sessions, p.previewSession)
+	m.showIcons = true
+	require.Contains(t, m.View().Content, "alpha — work")
+	require.Contains(t, m.View().Content, "beta — work")
+	require.Contains(t, m.previewCache, previewTarget{src: "ssh", name: alpha})
 	require.Contains(t, m.View().Content, "ALPHA_REMOTE")
 	for _, step := range []struct {
 		key  tea.KeyPressMsg
@@ -319,6 +323,8 @@ func TestSSHRemotePreviewCacheAndLocalSwitching(t *testing.T) {
 	require.Equal(t, "", m.sourceFilter)
 	require.Contains(t, m.View().Content, "ALPHA_REMOTE")
 	sh.AssertNumberOfCalls(t, "CmdCaptureRaw", 2)
+	require.Len(t, m.previewCache, 2)
+	require.Contains(t, m.previewCache, previewTarget{src: "ssh", name: beta})
 }
 
 func TestSSHRemotePreviewEnterStillCreatesAttachBridge(t *testing.T) {
@@ -338,6 +344,9 @@ func TestSSHRemotePreviewEnterStillCreatesAttachBridge(t *testing.T) {
 			row := model.SeshSession{Src: "ssh", Name: "ssh/host/work"}
 			sessions := model.SeshSessions{OrderedIndex: []string{"remote"}, Directory: model.SeshSessionMap{"remote": row}}
 			m := loadedSourcePreview(t, sessions, p.previewSession)
+			m.showIcons = true
+			require.Contains(t, m.View().Content, "host — work")
+			require.Contains(t, iconRow(t, m, "host — work"), "> ⚡ host — work")
 			require.Empty(t, tm.Calls, "preview creates no bridge and performs no local tmux operation")
 			chosen, quit := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			require.NotNil(t, quit)

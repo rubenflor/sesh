@@ -165,7 +165,8 @@ func TestSSHSourceSelectionPreservesCanonicalIdentity(t *testing.T) {
 				o.ShowIcons, o.SeparatorAware = true, true
 			}))
 			m = press(m, ctrlS)
-			require.Contains(t, ansi.Strip(m.View().Content), row.Name)
+			require.Contains(t, ansi.Strip(m.View().Content), "⚡ myinventa — deploy/blue café")
+			require.NotContains(t, ansi.Strip(m.View().Content), row.Name)
 			if selection == "index" {
 				m, _ = typeFilter(m, "#")
 				m = press(m, tea.KeyPressMsg{Code: '1', Text: "1"})

@@ -7,10 +7,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/joshmedeski/sesh/v2/icon"
@@ -250,10 +253,11 @@ type Model struct {
 	previewSeq int
 }
 
-// srcIcon returns the nerd font icon and color for a session source. The icon
-// carries a trailing space, so it is the whole icon cell for the single-width
-// glyphs it comes from; iconCell pads it when a wider icon is in play.
+// srcIcon returns the picker glyph and color for a source, with a trailing gap.
 func srcIcon(src string) (string, color.Color) {
+	if src == "ssh" {
+		return "⚡ ", lipgloss.ANSIColor(3)
+	}
 	return icon.SourceGlyph(src)
 }
 
@@ -273,7 +277,12 @@ func srcIcon(src string) (string, color.Color) {
 // space makes up the difference for that one icon without shifting any other
 // row.
 func (m Model) iconCell(item sessionItem) string {
-	return icon.Cell(item.icon, item.src, m.iconWidth)
+	if item.icon != "" {
+		return icon.Cell(item.icon, item.src, m.iconWidth)
+	}
+	glyph, clr := srcIcon(item.src)
+	cell := lipgloss.NewStyle().Foreground(clr).Render(glyph)
+	return cell + padding(m.iconWidth+1-lipgloss.Width(cell))
 }
 
 func padding(n int) string {
@@ -602,6 +611,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = false
 		m.allItems = buildItems(msg.sessions, m.separatorAware, m.iconFunc)
+		for _, item := range m.allItems {
+			glyph, _ := srcIcon(item.src)
+			m.iconWidth = max(m.iconWidth, iconWidth(glyph))
+		}
 		m.applyFilter()
 		return m, m.schedulePreview()
 
@@ -1278,18 +1291,22 @@ func (m Model) View() tea.View {
 				prefix += indexGutter(i, indexStyle)
 			}
 
+			label, indexes, sourceMatch := rowLabel(item, m.showIcons)
 			var tag string
 			if m.showIcons {
 				tag = m.iconCell(item.item)
+				if sourceMatch {
+					tag = matchStyle.Render(ansi.Strip(tag))
+				}
 			}
 			chip := m.aliasChip(item.item.name, item.chipMatchLen)
-			name := highlightMatches(item.item.name, item.matchedIndexes, matchStyle, normalStyle)
+			name := highlightMatches(label, indexes, matchStyle, normalStyle)
 
 			var windows string
 			if m.showWindows {
 				// Window names are display-only: they are never highlighted as
 				// matches and never become part of the selected value.
-				used := lipgloss.Width(prefix) + lipgloss.Width(tag) + lipgloss.Width(chip) + lipgloss.Width(item.item.name)
+				used := lipgloss.Width(prefix) + lipgloss.Width(tag) + lipgloss.Width(chip) + lipgloss.Width(label)
 				if text := windowsText(item.item.session.WindowNames, m.contentWidth()-used); text != "" {
 					windows = windowStyle.Render(text)
 				}
@@ -1456,6 +1473,62 @@ func windowsText(names []string, budget int) string {
 
 func elisionLabel(hidden int) string {
 	return fmt.Sprintf("%s+%d", windowGap, hidden)
+}
+
+func rowLabel(item filteredItem, showIcons bool) (string, []int, bool) {
+	name, indexes := item.item.name, item.matchedIndexes
+	if item.item.src != "ssh" {
+		return name, indexes, false
+	}
+	sourceMatch := false
+	host, session, err := model.ParseSSHIdentity(name)
+	if err == nil {
+		var mapped []int
+		canonicalOffset, labelOffset := len("ssh/"), 0
+		for _, index := range indexes {
+			if index >= 0 && index < canonicalOffset {
+				sourceMatch = true
+				break
+			}
+		}
+		if sourceMatch && !showIcons {
+			// With icons hidden, the separator carries the source match cue.
+			mapped = append(mapped, utf8.RuneCountInString(host)+1)
+		}
+		// Search still uses the canonical name; map its encoded matches to visible runes.
+		for component, text := range []string{host, session} {
+			if component > 0 {
+				for _, index := range indexes {
+					if index == canonicalOffset {
+						mapped = append(mapped, labelOffset+1)
+					}
+				}
+				canonicalOffset++
+				labelOffset += utf8.RuneCountInString(model.SessionNameSeparator)
+			}
+			for _, r := range text {
+				size := 1
+				if name[canonicalOffset] == '%' {
+					size = 3 * utf8.RuneLen(r)
+				}
+				for _, index := range indexes {
+					if index >= canonicalOffset && index < canonicalOffset+size {
+						mapped = append(mapped, labelOffset)
+						break
+					}
+				}
+				canonicalOffset += size
+				labelOffset++
+			}
+		}
+		name, indexes = host+model.SessionNameSeparator+session, mapped
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return unicode.ReplacementChar
+		}
+		return r
+	}, name), indexes, sourceMatch
 }
 
 func highlightMatches(s string, indexes []int, matchStyle, normalStyle lipgloss.Style) string {

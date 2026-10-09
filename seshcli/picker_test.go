@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/joshmedeski/sesh/v2/connector"
 	"github.com/joshmedeski/sesh/v2/execwrap"
@@ -32,12 +33,16 @@ func TestPickerSSHNamePassedUnchangedToConnect(t *testing.T) {
 	mockPicker.EXPECT().Pick(mock.Anything, mock.Anything).RunAndReturn(func(fetch picker.FetchFunc, _ picker.PickerOptions) (model.SeshSession, error) {
 		// Exercise the native model through load, SSH filtering, and Enter before
 		// handing the selected row to the real connector below.
-		m := picker.New(fetch, picker.Options{})
+		m := picker.New(fetch, picker.Options{ShowIcons: true})
 		initial := m.Init()().(tea.BatchMsg)
 		for _, command := range initial {
 			updated, _ := m.Update(command())
 			m = updated.(picker.Model)
 		}
+		sized, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+		m = sized.(picker.Model)
+		assert.Contains(t, ansi.Strip(m.View().Content), "⚡ first — nutiliti/2345% café")
+		assert.NotContains(t, ansi.Strip(m.View().Content), identity)
 		filtered, _ := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 		chosen, _ := filtered.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		selected := chosen.(picker.Model).ChosenSession()
