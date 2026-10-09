@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -110,7 +111,7 @@ func TestSSHPreviewEmptySourceHidesPreviousContent(t *testing.T) {
 		t.Run(previous.name, func(t *testing.T) {
 			sessions := sshPickerSessions()
 			calls := 0
-			m := loadedSourcePreview(t, sessions, func(row model.SeshSession) (string, error) {
+			m := loadedSourcePreview(t, sessions, func(_ context.Context, row model.SeshSession) (string, error) {
 				require.Equal(t, sessions.Directory["remote1"], row)
 				calls++
 				if calls == 1 && previous.err != nil {
@@ -148,10 +149,10 @@ func TestSSHPreviewEmptySourceHidesPreviousContent(t *testing.T) {
 			require.NotContains(t, m.View().Content, "No preview")
 			require.Contains(t, m.View().Content, "Loading preview...")
 			m = loadPreview(t, m, cmd)
-			require.NoError(t, m.previewErr)
-			require.Contains(t, m.View().Content, "preview of "+sessions.Directory["remote1"].Name)
+			require.Equal(t, previous.err, m.previewErr)
+			require.Contains(t, m.View().Content, old, "returning to SSH restores its cached result")
 			require.NotContains(t, m.View().Content, "Loading preview...")
-			require.Equal(t, 2, calls)
+			require.Equal(t, 1, calls)
 		})
 	}
 }
@@ -189,7 +190,7 @@ func TestSSHPreviewQueryChangesDuringPendingFetch(t *testing.T) {
 }
 
 func TestSSHPreviewErrorBelongsToHighlightedTarget(t *testing.T) {
-	m := loadedSourcePreview(t, sshPickerSessions(), func(row model.SeshSession) (string, error) {
+	m := loadedSourcePreview(t, sshPickerSessions(), func(_ context.Context, row model.SeshSession) (string, error) {
 		if row.Src == "ssh" {
 			return "", errors.New("previous SSH error")
 		}

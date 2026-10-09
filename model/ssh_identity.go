@@ -8,6 +8,26 @@ import (
 
 const sshIdentityHex = "0123456789ABCDEF"
 
+// TmuxSSHSessionTarget matches tmux's stored vis-escaped session name; the
+// canonical SSH identity carries the original bytes instead.
+func TmuxSSHSessionTarget(session string) string {
+	var target strings.Builder
+	for i := 0; i < len(session); i++ {
+		b := session[i]
+		const controls = "\a\b\t\n\v\f\r\\"
+		const escapes = "abtnvfr\\"
+		if index := strings.IndexByte(controls, b); index >= 0 {
+			target.WriteByte('\\')
+			target.WriteByte(escapes[index])
+		} else if b < 0x20 || b == 0x7f {
+			fmt.Fprintf(&target, "\\%03o", b)
+		} else {
+			target.WriteByte(b)
+		}
+	}
+	return target.String()
+}
+
 // EncodeSSHIdentity returns the canonical public identity for an SSH host and
 // remote tmux session.
 func EncodeSSHIdentity(host, session string) (string, error) {

@@ -57,7 +57,7 @@ func sshAttachCommand(identity string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	target := "=" + tmuxSSHSessionTarget(session)
+	target := "=" + model.TmuxSSHSessionTarget(session)
 	// tmux consumes an extra backslash before a trailing semicolon instead of
 	// treating it as a command separator, independently of shell quoting.
 	if strings.HasSuffix(target, ";") {
@@ -65,26 +65,6 @@ func sshAttachCommand(identity string) (string, error) {
 	}
 	remote := "tmux attach-session -t " + shell.Quote(target)
 	return "exec ssh -tt -- " + shell.Quote(host) + " " + shell.Quote(remote), nil
-}
-
-// Exact target lookup uses tmux's stored vis-escaped name, while the public SSH
-// identity carries the original bytes. Match session_check_name's escaping.
-func tmuxSSHSessionTarget(session string) string {
-	var target strings.Builder
-	for i := 0; i < len(session); i++ {
-		b := session[i]
-		const controls = "\a\b\t\n\v\f\r\\"
-		const escapes = "abtnvfr\\"
-		if index := strings.IndexByte(controls, b); index >= 0 {
-			target.WriteByte('\\')
-			target.WriteByte(escapes[index])
-		} else if b < 0x20 || b == 0x7f {
-			fmt.Fprintf(&target, "\\%03o", b)
-		} else {
-			target.WriteByte(b)
-		}
-	}
-	return target.String()
 }
 
 func (c *RealConnector) ensureSSHBridge(identity string) (string, error) {

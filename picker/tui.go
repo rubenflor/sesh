@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"sort"
@@ -58,7 +59,7 @@ type IconFunc func(session model.SeshSession) string
 // PreviewFunc renders the preview of a single session. It is called from a
 // tea.Cmd, never from Update or View: some strategies shell out, and blocking
 // the event loop on every cursor move would make the picker feel sluggish.
-type PreviewFunc func(session model.SeshSession) (string, error)
+type PreviewFunc func(context.Context, model.SeshSession) (string, error)
 
 // sessionsLoadedMsg carries the result of the async fetch back to Update().
 type sessionsLoadedMsg struct {
@@ -120,6 +121,8 @@ type Alias struct {
 // Options configures the picker model. Zero values are valid and mean
 // "off"/"unset", except Prompt and Placeholder which are passed through as-is.
 type Options struct {
+	// Context owns preview commands; nil uses a standalone background context.
+	Context        context.Context
 	ShowIcons      bool
 	ShowWindows    bool
 	SeparatorAware bool
@@ -222,7 +225,12 @@ type Model struct {
 	confirm    *confirmState
 	status     string
 
-	previewFunc     PreviewFunc
+	previewFunc    PreviewFunc
+	previewCtx     context.Context
+	previewCancel  context.CancelFunc
+	previewSSHSlot chan struct{}
+	// Completed SSH results are snapshots retained for this picker invocation.
+	previewCache    map[previewTarget]previewLoadedMsg
 	previewOn       bool
 	previewWidthPct int
 	previewMinWidth int
@@ -390,6 +398,10 @@ func buildItems(sessions model.SeshSessions, separatorAware bool, resolveIcon Ic
 }
 
 func New(fetchFunc FetchFunc, opts Options) Model {
+	ctx := opts.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ti := textinput.New()
 	ti.Placeholder = opts.Placeholder
 	ti.Prompt = opts.Prompt
@@ -419,6 +431,8 @@ func New(fetchFunc FetchFunc, opts Options) Model {
 		removeFunc:              opts.Remove,
 		killFunc:                opts.Kill,
 		previewFunc:             opts.PreviewFunc,
+		previewCtx:              ctx,
+		previewSSHSlot:          make(chan struct{}, 1),
 		previewOn:               opts.Preview,
 		previewWidthPct:         previewWidth(opts.PreviewWidth),
 		previewMinWidth:         previewMinWidth(opts.PreviewMinWidth),
@@ -464,6 +478,13 @@ func (m Model) previewMatches(target previewTarget) bool {
 	return m.previewOn && ok && previewTargetFor(session) == target
 }
 
+func (m *Model) cancelPreview() {
+	if m.previewCancel != nil {
+		m.previewCancel()
+		m.previewCancel = nil
+	}
+}
+
 // schedulePreview arms a debounced fetch for the highlighted session, and
 // returns nil when there is nothing to do — the pane is off, the session is
 // already previewed, or its fetch is already in flight.
@@ -477,6 +498,7 @@ func (m *Model) schedulePreview() tea.Cmd {
 		// Nothing is highlighted, so there is nothing the old content could
 		// still be describing.
 		m.previewSeq++
+		m.cancelPreview()
 		m.previewTarget, m.previewPending = previewTarget{}, previewTarget{}
 		m.previewName, m.previewContent, m.previewErr = "", "", nil
 		return nil
@@ -487,6 +509,7 @@ func (m *Model) schedulePreview() tea.Cmd {
 	}
 
 	m.previewSeq++
+	m.cancelPreview()
 	m.previewPending = previewTarget{}
 	if target == m.previewTarget {
 		// Returning to loaded content still invalidates another target's fetch.
@@ -497,11 +520,30 @@ func (m *Model) schedulePreview() tea.Cmd {
 	return tea.Tick(previewDebounce, func(time.Time) tea.Msg { return msg })
 }
 
-func (m Model) fetchPreview(seq int, session model.SeshSession) tea.Cmd {
+func (m *Model) fetchPreview(seq int, session model.SeshSession) tea.Cmd {
 	previewFunc := m.previewFunc
+	ctx, cancel := context.WithCancel(m.previewCtx)
+	m.previewCancel = cancel
+	slot := m.previewSSHSlot
 	return func() tea.Msg {
-		content, err := previewFunc(session)
-		return previewLoadedMsg{seq: seq, target: previewTargetFor(session), name: session.Name, content: content, err: err}
+		defer cancel()
+		msg := previewLoadedMsg{seq: seq, target: previewTargetFor(session), name: session.Name}
+		if session.Src == "ssh" {
+			// Wait for cancelled SSH to exit before spawning its replacement.
+			select {
+			case <-ctx.Done():
+				msg.err = ctx.Err()
+				return msg
+			case slot <- struct{}{}:
+			}
+			defer func() { <-slot }()
+			if err := ctx.Err(); err != nil {
+				msg.err = err
+				return msg
+			}
+		}
+		msg.content, msg.err = previewFunc(ctx, session)
+		return msg
 	}
 }
 
@@ -519,6 +561,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		item, _ := m.aliasMatch(alias.Alias)
 		m.chosen = item.session
+		m.cancelPreview()
 		return m, tea.Quit
 
 	case previewFetchMsg:
@@ -526,22 +569,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.seq != m.previewSeq || !m.previewMatches(previewTargetFor(msg.session)) {
 			return m, nil
 		}
-		return m, m.fetchPreview(msg.seq, msg.session)
+		if cached, ok := m.previewCache[previewTargetFor(msg.session)]; ok {
+			cached.seq = msg.seq
+			return m, func() tea.Msg { return cached }
+		}
+		cmd := m.fetchPreview(msg.seq, msg.session)
+		return m, cmd
 
 	case previewLoadedMsg:
 		if msg.seq != m.previewSeq || !m.previewMatches(msg.target) {
 			return m, nil
 		}
+		m.cancelPreview()
 		m.previewPending = previewTarget{}
 		m.previewTarget = msg.target
 		m.previewName = msg.name
 		m.previewContent = msg.content
 		m.previewErr = msg.err
+		if msg.target.src == "ssh" {
+			if m.previewCache == nil {
+				m.previewCache = make(map[previewTarget]previewLoadedMsg)
+			}
+			m.previewCache[msg.target] = msg
+		}
 		return m, nil
 
 	case sessionsLoadedMsg:
 		if msg.err != nil {
 			m.loadErr = msg.err
+			m.cancelPreview()
 			return m, tea.Quit
 		}
 		m.loading = false
@@ -584,10 +640,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				selected := m.filtered[m.cursor]
 				m.chosen = selected.item.session
 			}
+			m.cancelPreview()
 			return m, tea.Quit
 
 		case "esc", "ctrl+c":
 			m.quit = true
+			m.cancelPreview()
 			return m, tea.Quit
 
 		case "up", "ctrl+k", "ctrl+p":
@@ -628,10 +686,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewOn = !m.previewOn
 			m.syncInputWidth()
 			if !m.previewOn {
-				// Drop anything in flight so switching back on always refetches
-				// the highlighted row rather than waiting on a request made
-				// before the pane was hidden.
+				// Drop in-flight work so reopening never waits on a hidden request.
 				m.previewSeq++
+				m.cancelPreview()
 				m.previewPending = previewTarget{}
 				return m, nil
 			}
@@ -645,6 +702,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.chosen = session
+				m.cancelPreview()
 				return m, tea.Quit
 			}
 		}

@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"context"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -58,7 +59,7 @@ func TestPickerPreviewCapturesRowBeforeDebounce(t *testing.T) {
 	sessions := model.SeshSessions{OrderedIndex: []string{"selected"}, Directory: model.SeshSessionMap{"selected": row}}
 	m := New(testFetchFunc(sessions), testOptionsWith(func(o *Options) {
 		o.Preview = true
-		o.PreviewFunc = func(selected model.SeshSession) (string, error) {
+		o.PreviewFunc = func(_ context.Context, selected model.SeshSession) (string, error) {
 			require.Equal(t, row, selected)
 			return "original output", nil
 		}
@@ -119,7 +120,7 @@ func TestPickerLocalPreviewUsesOriginalIdentity(t *testing.T) {
 			}
 			// No name-preview expectations: a fallback must fail this test.
 			p := &RealPicker{tmux: tm, previewer: previewer.NewMockPreviewer(t)}
-			output, err := p.previewSession(row)
+			output, err := p.previewSession(t.Context(), row)
 			if success {
 				require.NoError(t, err)
 				require.Equal(t, "original output", output)
@@ -132,16 +133,13 @@ func TestPickerLocalPreviewUsesOriginalIdentity(t *testing.T) {
 }
 
 func TestPickerNonTmuxPreviewPreservesName(t *testing.T) {
-	for _, src := range []string{"ssh", "zoxide", "dir", "config", "config_wildcard", "tmuxinator", "tmux-pane"} {
+	for _, src := range []string{"zoxide", "dir", "config", "config_wildcard", "tmuxinator", "tmux-pane"} {
 		t.Run(src, func(t *testing.T) {
 			name := "work"
-			if src == "ssh" {
-				name = "ssh/host/work%2F1"
-			}
 			pr := previewer.NewMockPreviewer(t)
 			pr.EXPECT().Preview(name).Return("existing preview", nil).Once()
 			p := &RealPicker{tmux: tmux.NewMockTmux(t), previewer: pr}
-			output, err := p.previewSession(model.SeshSession{Src: src, Name: name})
+			output, err := p.previewSession(t.Context(), model.SeshSession{Src: src, Name: name})
 			require.NoError(t, err)
 			require.Equal(t, "existing preview", output)
 		})
@@ -243,7 +241,7 @@ func TestPickerPreviewSameNameTargetChanges(t *testing.T) {
 				var asked []model.SeshSession
 				m := New(testFetchFunc(sessions), testOptionsWith(func(o *Options) {
 					o.Preview = true
-					o.PreviewFunc = func(row model.SeshSession) (string, error) {
+					o.PreviewFunc = func(_ context.Context, row model.SeshSession) (string, error) {
 						asked = append(asked, row)
 						if len(asked) == 1 {
 							return "OLD_OUTPUT", nil
@@ -305,7 +303,7 @@ func TestPickerPreviewExactTargetIsReused(t *testing.T) {
 			calls := 0
 			m := New(testFetchFunc(sessions), testOptionsWith(func(o *Options) {
 				o.Preview = true
-				o.PreviewFunc = func(selected model.SeshSession) (string, error) {
+				o.PreviewFunc = func(_ context.Context, selected model.SeshSession) (string, error) {
 					calls++
 					require.Equal(t, row, selected)
 					return "SAME_TARGET_OUTPUT", nil

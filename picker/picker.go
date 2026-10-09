@@ -13,6 +13,7 @@ import (
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/previewer"
+	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/joshmedeski/sesh/v2/tmux"
 	"github.com/joshmedeski/sesh/v2/zoxide"
 )
@@ -56,6 +57,7 @@ type Picker interface {
 type RealPicker struct {
 	config    model.Config
 	previewer previewer.Previewer
+	shell     shell.Shell
 	// home expands the paths on [[session]] blocks so a configured icon can be
 	// matched against the absolute path a session is listed with.
 	home home.Home
@@ -78,10 +80,11 @@ type RealPicker struct {
 // forgotten until the entry aged out on its own.
 type CacheRefreshFunc func()
 
-func NewPicker(config model.Config, previewer previewer.Previewer, home home.Home, wildcards lister.WildcardFinder, zoxide zoxide.Zoxide, tmux tmux.Tmux, refreshCache CacheRefreshFunc) Picker {
+func NewPicker(config model.Config, previewer previewer.Previewer, home home.Home, wildcards lister.WildcardFinder, zoxide zoxide.Zoxide, tmux tmux.Tmux, sh shell.Shell, refreshCache CacheRefreshFunc) Picker {
 	return &RealPicker{
 		config:       config,
 		previewer:    previewer,
+		shell:        sh,
 		home:         home,
 		wildcards:    wildcards,
 		zoxide:       zoxide,
@@ -217,7 +220,10 @@ func aliasFilterPrefix(configured *string) string {
 	return *configured
 }
 
-func (p *RealPicker) previewSession(session model.SeshSession) (string, error) {
+func (p *RealPicker) previewSession(ctx context.Context, session model.SeshSession) (string, error) {
+	if session.Src == "ssh" {
+		return p.previewSSHSession(ctx, session.Name)
+	}
 	if session.Src == "tmux" {
 		return previewer.PreviewTmuxSession(p.tmux, session)
 	}
@@ -287,7 +293,15 @@ func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (model.SeshSe
 		killFunc = p.killSession
 	}
 
+	previewCtx := opts.Context
+	if previewCtx == nil {
+		previewCtx = context.Background()
+	}
+	previewCtx, cancelPreviews := context.WithCancel(previewCtx)
+	defer cancelPreviews()
+
 	m := New(fetchFunc, Options{
+		Context:                 previewCtx,
 		ShowIcons:               showIcons,
 		ShowWindows:             showWindows,
 		SeparatorAware:          p.config.SeparatorAware,

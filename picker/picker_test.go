@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -1550,7 +1551,7 @@ func TestWindowsText(t *testing.T) {
 // testPreviewFunc records every session it is asked about, so tests can assert
 // which fetches actually happened.
 func testPreviewFunc(asked *[]string) PreviewFunc {
-	return func(session model.SeshSession) (string, error) {
+	return func(_ context.Context, session model.SeshSession) (string, error) {
 		*asked = append(*asked, session.Name)
 		return "preview of " + session.Name, nil
 	}
@@ -1861,7 +1862,7 @@ func TestPreview_ViewFitsTerminalWidth(t *testing.T) {
 
 func TestPreview_LongContentIsClipped(t *testing.T) {
 	m, _ := previewModel(func(o *Options) {
-		o.PreviewFunc = func(model.SeshSession) (string, error) {
+		o.PreviewFunc = func(context.Context, model.SeshSession) (string, error) {
 			return strings.Repeat(strings.Repeat("x", 400)+"\n", 200), nil
 		}
 	})

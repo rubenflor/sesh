@@ -103,6 +103,7 @@ func (m Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// a dialog is a poor place to start making it mean something narrower.
 		m.confirm = nil
 		m.quit = true
+		m.cancelPreview()
 		return m, tea.Quit
 	case "y", "Y":
 		return m.applyConfirm(true)
