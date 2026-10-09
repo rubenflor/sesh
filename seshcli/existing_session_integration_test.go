@@ -241,6 +241,9 @@ func (s *existingPrivateTmux) CmdCaptureRaw(ctx context.Context, _ string, stdou
 		args = append([]string(nil), args...)
 		args[3] = strings.ReplaceAll(args[3], "#{session_attached}", "#{?#{==:#{session_id},$1},1,#{session_attached}}")
 	}
+	if args[0] == "-u" && (args[1] == "list-windows" || args[1] == "if-shell") && s.beforeOperation != nil {
+		s.beforeOperation("list-windows")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	command := []string{"-u", "TMUX", "-u", "TMUX_PANE", "-u", "SESH_CLIENT", "-u", model.SSHBridgeIdentityEnv, "SHELL=/bin/sh", s.binary, "-S", s.socket, "-f", "/dev/null"}
@@ -449,6 +452,7 @@ func TestExistingSessionGenerationGuardOnPrivateTmux(t *testing.T) {
 			case "select":
 				_, err = tm.SelectWindow(id+":1", generation)
 			}
+			require.Nil(t, s.beforeOperation, "the planned server restart must actually run")
 			require.Error(t, err)
 			require.Empty(t, s.focused)
 			require.Equal(t, bridgeBefore, s.state("$0"))

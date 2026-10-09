@@ -81,7 +81,7 @@ func sshIntegrationDeps(t *testing.T, caching bool) (*Deps, *shell.MockShell, *e
 	s.On("CmdCapture", "tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).
 		Return("", nil).Maybe()
 	s.On("ListCmd", "tmux", "list-windows", "-a", "-F", mock.Anything).Return([]string{}, nil).Maybe()
-	s.On("ListCmd", "tmux", "-u", "list-windows", "-a", "-F", mock.Anything).Return([]string{}, nil).Maybe()
+	s.On("CmdCaptureRaw", mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-windows", "-a", "-F", mock.Anything).Return(rawInventoryResult(""), nil).Maybe()
 	s.On("ListCmd", "tmuxinator", "list", "-n").Return(nil, assert.AnError).Maybe()
 	s.On("PrepareCmd", "zoxide query --list --score", map[string]string{}).
 		Return([]string{"zoxide", "query", "--list", "--score"}, nil).Maybe()
@@ -235,9 +235,9 @@ func TestSSHIntegrationBridgeMetadataNoLeak(t *testing.T) {
 			assert.Empty(t, out.String())
 		})
 	}
-	s.On("ListCmd", "tmux", "-u", "if-shell", "-F", "-t", "$2:", mock.Anything,
-		"'list-windows' '-t' '$2' '-F' '#{window_id}::#{window_index}::#{window_active}::#{n:window_name}::#{n:pane_current_path}::#{n:#{pid}:#{start_time}:#{socket_path}}::#{window_name}#{pane_current_path}#{pid}:#{start_time}:#{socket_path}'", "if-shell").
-		Return([]string{}, nil).Once()
+	s.On("CmdCaptureRaw", mock.Anything, "tmux", 16<<20, 64<<10, "-u", "if-shell", "-F", "-t", "$2:", mock.Anything,
+		`'list-windows' '-t' '$2' '-F' 'W1::#{session_id}::"#{q:session_name}"::#{window_id}::#{window_index}::#{window_active}::"#{q:window_name}"::"#{q:pane_current_path}"::"#{pid}:#{start_time}:#{q:socket_path}"'`, "if-shell").
+		Return(rawInventoryResult(`W1::$2::"user"::@7::4::1::"notes"::"/user"::"101:1700000000:/tmp/socket"`), nil).Once()
 	root := &cobra.Command{Use: "sesh"}
 	root.PersistentFlags().String("config", configPath, "")
 	root.AddCommand(NewWindowCommand(&deps.BaseDeps))

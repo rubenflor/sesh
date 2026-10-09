@@ -8,20 +8,22 @@ import (
 	"github.com/joshmedeski/sesh/v2/model"
 )
 
-func listWindowsFormat() string {
-	variables := []string{
+var windowInventorySchema = inventorySchema{
+	tag: "W1",
+	fields: []string{
+		"#{session_id}",
+		`"#{q:session_name}"`,
 		"#{window_id}",
 		"#{window_index}",
 		"#{window_active}",
-		"#{n:window_name}",
-		"#{n:pane_current_path}",
-		"#{n:" + serverGenerationFormat + "}",
-		"#{window_name}#{pane_current_path}" + serverGenerationFormat,
-	}
-	// Only native IDs and decimal numbers precede the payload. tmux's n:
-	// modifier counts bytes, so arbitrary text (including :: and newlines)
-	// cannot shift an identity field or impersonate another inventory record.
-	return strings.Join(variables, separator)
+		`"#{q:window_name}"`,
+		`"#{q:pane_current_path}"`,
+		inventoryGenerationFormat,
+	},
+}
+
+func listWindowsFormat() string {
+	return windowInventorySchema.format()
 }
 
 func (t *RealTmux) ListWindows(targetSession string, serverGeneration ...string) ([]*model.TmuxWindow, error) {
@@ -36,11 +38,14 @@ func (t *RealTmux) ListWindows(targetSession string, serverGeneration ...string)
 		return nil, err
 	}
 
-	// Keep the output bytes identical to n: lengths, even outside a UTF-8 locale.
 	args = append([]string{"-u"}, args...)
-	output, err := t.shell.ListCmd(t.bin, args...)
+	output, err := t.captureInventory(args...)
 	if err != nil {
 		return nil, err
+	}
+	// A verified live session always has a window; empty capture cannot satisfy its guard.
+	if len(serverGeneration) != 0 && output == "" {
+		return nil, errors.New("unavailable verified tmux window inventory")
 	}
 	return parseTmuxWindowsOutput(output)
 }
@@ -69,30 +74,25 @@ func (t *RealTmux) ListAllWindowNames(format string) (map[string][]string, error
 // ListAllWindows returns the windows of every session, keyed by session name,
 // in a single tmux invocation.
 func (t *RealTmux) ListAllWindows() (map[string][]model.TmuxWindow, error) {
-	output, err := t.shell.ListCmd(t.bin, "-u", "list-windows", "-a", "-F", "#{n:session_name}"+separator+"#{session_name}"+listWindowsFormat())
+	output, err := t.captureInventory("-u", "list-windows", "-a", "-F", listWindowsFormat())
 	if err != nil {
 		return nil, err
 	}
 	return parseAllWindowsOutput(output)
 }
 
-func parseAllWindowsOutput(rawList []string) (map[string][]model.TmuxWindow, error) {
+func parseAllWindowsOutput(output string) (map[string][]model.TmuxWindow, error) {
+	records, err := windowInventorySchema.decode(output)
+	if err != nil {
+		return nil, err
+	}
 	windows := make(map[string][]model.TmuxWindow)
-	for output := strings.Join(rawList, "\n"); output != ""; {
-		length, rest, found := strings.Cut(output, separator)
-		if !found {
-			return nil, errors.New("malformed tmux window inventory")
-		}
-		session, rest, err := takeWindowInventoryField(rest, length)
-		if err != nil || session == "" {
-			return nil, errors.New("malformed tmux window session inventory")
-		}
-		window, remaining, err := parseTmuxWindow(rest)
+	for _, fields := range records {
+		window, err := parseTmuxWindow(fields)
 		if err != nil {
 			return nil, err
 		}
-		windows[session] = append(windows[session], *window)
-		output = remaining
+		windows[fields[1]] = append(windows[fields[1]], *window)
 	}
 	return windows, nil
 }
@@ -114,58 +114,35 @@ func parseAllWindowNamesOutput(rawList []string) map[string][]string {
 	return windowNames
 }
 
-func parseTmuxWindowsOutput(rawList []string) ([]*model.TmuxWindow, error) {
-	windows := make([]*model.TmuxWindow, 0, len(rawList))
-	// ListCmd splits on newlines. Rejoin before consuming byte-framed fields,
-	// because a newline in display/path data is part of its record's payload.
-	for output := strings.Join(rawList, "\n"); output != ""; {
-		window, remaining, err := parseTmuxWindow(output)
+func parseTmuxWindowsOutput(output string) ([]*model.TmuxWindow, error) {
+	records, err := windowInventorySchema.decode(output)
+	if err != nil {
+		return nil, err
+	}
+	windows := make([]*model.TmuxWindow, 0, len(records))
+	for _, fields := range records {
+		window, err := parseTmuxWindow(fields)
 		if err != nil {
 			return nil, err
 		}
 		windows = append(windows, window)
-		output = remaining
 	}
 	return windows, nil
 }
 
-func parseTmuxWindow(output string) (*model.TmuxWindow, string, error) {
-	fields := strings.SplitN(output, separator, 7)
-	if len(fields) != 7 || !validWindowID(fields[0]) {
-		return nil, "", errors.New("unverified tmux window inventory identity")
+func parseTmuxWindow(fields []string) (*model.TmuxWindow, error) {
+	if !validTmuxID(fields[0], "$") || fields[1] == "" || !validWindowID(fields[2]) {
+		return nil, errors.New("unverified tmux window inventory identity")
 	}
-	index, err := strconv.Atoi(fields[1])
-	if err != nil || index < 0 || strconv.Itoa(index) != fields[1] || (fields[2] != "0" && fields[2] != "1") {
-		return nil, "", errors.New("malformed tmux window inventory")
+	index, err := strconv.Atoi(fields[3])
+	if err != nil || index < 0 || strconv.Itoa(index) != fields[3] || (fields[4] != "0" && fields[4] != "1") {
+		return nil, errors.New("malformed tmux window inventory")
 	}
-	payload := fields[6]
-	var values [3]string
-	for i := range values {
-		values[i], payload, err = takeWindowInventoryField(payload, fields[3+i])
-		if err != nil {
-			return nil, "", err
-		}
-	}
-	if !validServerGeneration(values[2]) {
-		return nil, "", errors.New("unverified tmux window inventory generation")
-	}
-	if payload != "" {
-		var found bool
-		payload, found = strings.CutPrefix(payload, "\n")
-		if !found {
-			return nil, "", errors.New("malformed tmux window inventory record boundary")
-		}
+	if !validServerGeneration(fields[7]) {
+		return nil, errors.New("unverified tmux window inventory generation")
 	}
 	return &model.TmuxWindow{
-		ID: fields[0], Index: index, Active: fields[2] == "1",
-		Name: values[0], Path: values[1], ServerGeneration: values[2],
-	}, payload, nil
-}
-
-func takeWindowInventoryField(payload, length string) (string, string, error) {
-	size, err := strconv.Atoi(length)
-	if err != nil || size < 0 || strconv.Itoa(size) != length || size > len(payload) {
-		return "", "", errors.New("malformed tmux window inventory field length")
-	}
-	return payload[:size], payload[size:], nil
+		ID: fields[2], Index: index, Active: fields[4] == "1",
+		Name: fields[5], Path: fields[6], ServerGeneration: fields[7],
+	}, nil
 }

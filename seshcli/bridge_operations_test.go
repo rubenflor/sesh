@@ -98,8 +98,8 @@ func TestWindowListAllowsUnmarkedLocalSession(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			base, configPath := bridgeOperationsBase(t, "")
 			s := base.Shell.(*shell.MockShell)
-			s.On("ListCmd", "tmux", "-u", "if-shell", "-F", "-t", "$1:", mock.Anything,
-				"'list-windows' '-t' '$1' '-F' '#{window_id}::#{window_index}::#{window_active}::#{n:window_name}::#{n:pane_current_path}::#{n:#{pid}:#{start_time}:#{socket_path}}::#{window_name}#{pane_current_path}#{pid}:#{start_time}:#{socket_path}'", "if-shell").Return([]string{}, nil).Once()
+			s.On("CmdCaptureRaw", mock.Anything, "tmux", 16<<20, 64<<10, "-u", "if-shell", "-F", "-t", "$1:", mock.Anything,
+				`'list-windows' '-t' '$1' '-F' 'W1::#{session_id}::"#{q:session_name}"::#{window_id}::#{window_index}::#{window_active}::"#{q:window_name}"::"#{q:pane_current_path}"::"#{pid}:#{start_time}:#{q:socket_path}"'`, "if-shell").Return(rawInventoryResult(`W1::$1::"user"::@7::4::1::"notes"::"/user"::"101:1700000000:/tmp/socket"`), nil).Once()
 			root := &cobra.Command{Use: "sesh"}
 			root.PersistentFlags().String("config", configPath, "")
 			root.AddCommand(NewWindowCommand(base))

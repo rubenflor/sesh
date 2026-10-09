@@ -98,10 +98,12 @@ func TestInventoryCodecRejectsMalformedBatches(t *testing.T) {
 }
 
 func TestInventoryCodecPreservesEveryArbitraryField(t *testing.T) {
-	for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema} {
+	for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema, windowInventorySchema} {
 		fields := sessionInventoryFields()
 		if schema.tag == paneInventorySchema.tag {
 			fields = paneInventoryFields()
+		} else if schema.tag == windowInventorySchema.tag {
+			fields = windowInventoryFields()
 		}
 		for i, format := range schema.fields {
 			if !strings.HasPrefix(format, `"`) {
@@ -131,7 +133,7 @@ func TestInventoryCodecLimits(t *testing.T) {
 }
 
 func TestInventoryFormatsEvaluateArbitraryFieldsOnce(t *testing.T) {
-	for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema} {
+	for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema, windowInventorySchema} {
 		format := schema.format()
 		require.NotContains(t, format, "#{n:")
 		for _, field := range schema.fields {
@@ -148,10 +150,12 @@ func TestInventoryFormatsEvaluateArbitraryFieldsOnce(t *testing.T) {
 }
 
 func FuzzInventoryDecoder(f *testing.F) {
-	for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema} {
+	for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema, windowInventorySchema} {
 		fields := sessionInventoryFields()
 		if schema.tag == paneInventorySchema.tag {
 			fields = paneInventoryFields()
+		} else if schema.tag == windowInventorySchema.tag {
+			fields = windowInventoryFields()
 		}
 		valid := inventoryRow(schema, fields)
 		f.Add(valid)
@@ -160,7 +164,7 @@ func FuzzInventoryDecoder(f *testing.F) {
 	}
 	f.Add("P1::0::\"before\n::after\\\"\"::0")
 	f.Fuzz(func(t *testing.T, output string) {
-		for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema} {
+		for _, schema := range []inventorySchema{sessionInventorySchema, paneInventorySchema, windowInventorySchema} {
 			records, err := schema.decode(output)
 			if err != nil {
 				if records != nil {
@@ -188,6 +192,12 @@ func FuzzInventoryDecoder(f *testing.F) {
 		}
 		if panes, err := parseTmuxPanesOutput(output); err != nil && panes != nil {
 			t.Fatal("partial pane identities on failure")
+		}
+		if windows, err := parseTmuxWindowsOutput(output); err != nil && windows != nil {
+			t.Fatal("partial window identities on failure")
+		}
+		if windows, err := parseAllWindowsOutput(output); err != nil && windows != nil {
+			t.Fatal("partial all-window identities on failure")
 		}
 	})
 }

@@ -3,6 +3,7 @@ package tmux
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,14 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testWindowInventoryFormat = "#{window_id}::#{window_index}::#{window_active}::#{n:window_name}::#{n:pane_current_path}::#{n:#{pid}:#{start_time}:#{socket_path}}::#{window_name}#{pane_current_path}#{pid}:#{start_time}:#{socket_path}"
+const testWindowInventoryFormat = `W1::#{session_id}::"#{q:session_name}"::#{window_id}::#{window_index}::#{window_active}::"#{q:window_name}"::"#{q:pane_current_path}"::"#{pid}:#{start_time}:#{q:socket_path}"`
+
+func windowInventoryFields() []string {
+	return []string{"$1", "sesh", "@7", "4", "1", "notes", "/tmp/A", "101:1700000000:/tmp/socket"}
+}
 
 func windowInventoryRow(window model.TmuxWindow) string {
 	active := 0
 	if window.Active {
 		active = 1
 	}
-	return fmt.Sprintf("%s::%d::%d::%d::%d::%d::%s%s%s", window.ID, window.Index, active, len(window.Name), len(window.Path), len(window.ServerGeneration), window.Name, window.Path, window.ServerGeneration)
+	return inventoryRow(windowInventorySchema, []string{"$1", "sesh", window.ID, strconv.Itoa(window.Index), strconv.Itoa(active), window.Name, window.Path, window.ServerGeneration})
 }
 
 func TestListWindows(t *testing.T) {
@@ -28,8 +33,8 @@ func TestListWindows(t *testing.T) {
 	t.Run("returns parsed windows", func(t *testing.T) {
 		mockShell := &shell.MockShell{}
 		tmux := NewTmux(nil, mockShell, "")
-		mockShell.EXPECT().ListCmd("tmux", "-u", "list-windows", "-F", testWindowInventoryFormat).Return(
-			[]string{windowInventoryRow(model.TmuxWindow{ID: "@7", Index: 0, Name: "editor", Path: "/Users/josh/c/sesh", ServerGeneration: generation}), windowInventoryRow(model.TmuxWindow{ID: "@8", Index: 1, Name: "server", Path: "/Users/josh/c/sesh", Active: true, ServerGeneration: generation}), ""},
+		mockShell.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-windows", "-F", testWindowInventoryFormat).Return(
+			rawInventoryResult(strings.Join([]string{windowInventoryRow(model.TmuxWindow{ID: "@7", Index: 0, Name: "editor", Path: "/Users/josh/c/sesh", ServerGeneration: generation}), windowInventoryRow(model.TmuxWindow{ID: "@8", Index: 1, Name: "server", Path: "/Users/josh/c/sesh", Active: true, ServerGeneration: generation}), ""}, "\n")),
 			nil,
 		)
 		windows, err := tmux.ListWindows("")
@@ -52,8 +57,8 @@ func TestListWindows(t *testing.T) {
 	t.Run("target session flag is passed when non-empty", func(t *testing.T) {
 		mockShell := &shell.MockShell{}
 		tmux := NewTmux(nil, mockShell, "custom-tmux")
-		mockShell.EXPECT().ListCmd("custom-tmux", "-u", "list-windows", "-t", "work", "-F", mock.Anything).Return(
-			[]string{windowInventoryRow(model.TmuxWindow{ID: "@9", Name: "main", Path: "/home/user", ServerGeneration: generation})},
+		mockShell.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-windows", "-t", "work", "-F", testWindowInventoryFormat).Return(
+			rawInventoryResult(windowInventoryRow(model.TmuxWindow{ID: "@9", Name: "main", Path: "/home/user", ServerGeneration: generation})),
 			nil,
 		)
 		windows, err := tmux.ListWindows("work")
@@ -62,7 +67,7 @@ func TestListWindows(t *testing.T) {
 	})
 
 	t.Run("parseTmuxWindowsOutput", func(t *testing.T) {
-		raw := []string{windowInventoryRow(model.TmuxWindow{ID: "@7", Name: "editor", Path: "/Users/josh/c/sesh", ServerGeneration: generation}), windowInventoryRow(model.TmuxWindow{ID: "@8", Index: 1, Name: "server", Path: "/Users/josh/c/sesh", Active: true, ServerGeneration: generation})}
+		raw := strings.Join([]string{windowInventoryRow(model.TmuxWindow{ID: "@7", Name: "editor", Path: "/Users/josh/c/sesh", ServerGeneration: generation}), windowInventoryRow(model.TmuxWindow{ID: "@8", Index: 1, Name: "server", Path: "/Users/josh/c/sesh", Active: true, ServerGeneration: generation})}, "\n")
 		windows, err := parseTmuxWindowsOutput(raw)
 		assert.Nil(t, err)
 		assert.Len(t, windows, 2)
@@ -120,9 +125,8 @@ func TestListAllWindows(t *testing.T) {
 	const generation = "101:1700000000:/tmp/socket"
 	mockShell := &shell.MockShell{}
 	tmux := &RealTmux{shell: mockShell, bin: "custom-tmux"}
-	mockShell.EXPECT().ListCmd("custom-tmux", "-u", "list-windows", "-a", "-F",
-		"#{n:session_name}::#{session_name}"+testWindowInventoryFormat).Return(
-		[]string{"4::sesh" + windowInventoryRow(model.TmuxWindow{ID: "@7", Index: 1, Name: "editor", Path: "/c/sesh", Active: true, ServerGeneration: generation}), "4::sesh" + windowInventoryRow(model.TmuxWindow{ID: "@8", Index: 2, Name: "server", Path: "/c/sesh", ServerGeneration: generation}), "8::dotfiles" + windowInventoryRow(model.TmuxWindow{ID: "@9", Index: 1, Name: "nvim", Path: "/c/dotfiles", Active: true, ServerGeneration: generation})},
+	mockShell.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-windows", "-a", "-F", testWindowInventoryFormat).Return(
+		rawInventoryResult(strings.Join([]string{windowInventoryRow(model.TmuxWindow{ID: "@7", Index: 1, Name: "editor", Path: "/c/sesh", Active: true, ServerGeneration: generation}), windowInventoryRow(model.TmuxWindow{ID: "@8", Index: 2, Name: "server", Path: "/c/sesh", ServerGeneration: generation}), inventoryRow(windowInventorySchema, []string{"$2", "dotfiles", "@9", "1", "1", "nvim", "/c/dotfiles", generation})}, "\n")),
 		nil,
 	)
 	windows, err := tmux.ListAllWindows()
@@ -139,25 +143,27 @@ func TestListAllWindows(t *testing.T) {
 func TestWindowInventoryTextCannotShiftIdentity(t *testing.T) {
 	ordinary := model.TmuxWindow{ID: "@7", Index: 4, Name: "notes", Path: "/tmp/A", Active: true, ServerGeneration: "101:1700000000:/tmp/socket"}
 	for _, field := range []string{"name", "path", "generation socket"} {
-		for _, text := range []string{"A::0::@8", "%3A%::\\x3A雪", "#{window_id}::@8::101:1700000000:/other"} {
+		for _, text := range []string{"", " ", ":", "::", `"'`, `\`, "\t", "café雪", "$0 @0 %0", "A::0::@8", "%3A%::\\x3A雪", "#{window_id}::@8::101:1700000000:/other"} {
 			t.Run(field+"/"+text, func(t *testing.T) {
 				window := ordinary
 				switch field {
 				case "name":
 					window.Name = text
 				case "path":
-					window.Path = "/tmp/" + text
+					window.Path = text
 				case "generation socket":
 					window.ServerGeneration = "101:1700000000:/tmp/" + text
 				}
-				windows, err := parseTmuxWindowsOutput(strings.Split(windowInventoryRow(window)+"\n", "\n"))
+				windows, err := parseTmuxWindowsOutput(windowInventoryRow(window) + "\n")
 				require.NoError(t, err)
 				require.Equal(t, []*model.TmuxWindow{&window}, windows)
+				all, err := parseAllWindowsOutput(windowInventoryRow(window) + "\n")
+				require.NoError(t, err)
+				require.Equal(t, map[string][]model.TmuxWindow{"sesh": {window}}, all)
 			})
 		}
 	}
-	// A complete fake record inside a field is data, including when ListCmd
-	// splits it into several strings. Its ID must not create an extra window.
+	// A complete fake record inside a quoted field must not create another window.
 	fake := windowInventoryRow(model.TmuxWindow{ID: "@8", Index: 4, Name: "notes", Path: "/other", ServerGeneration: ordinary.ServerGeneration})
 	for _, field := range []string{"name", "path"} {
 		t.Run(field+"/embedded record", func(t *testing.T) {
@@ -167,71 +173,117 @@ func TestWindowInventoryTextCannotShiftIdentity(t *testing.T) {
 			} else {
 				window.Path = "/tmp/A\n" + fake + "\r\n雪"
 			}
-			windows, err := parseTmuxWindowsOutput(strings.Split(windowInventoryRow(window)+"\n"+windowInventoryRow(ordinary)+"\n", "\n"))
+			output := windowInventoryRow(window) + "\n" + windowInventoryRow(ordinary) + "\n"
+			windows, err := parseTmuxWindowsOutput(output)
 			require.NoError(t, err)
 			require.Equal(t, []*model.TmuxWindow{&window, &ordinary}, windows)
+			all, err := parseAllWindowsOutput(output)
+			require.NoError(t, err)
+			require.Equal(t, map[string][]model.TmuxWindow{"sesh": {window, ordinary}}, all)
 		})
 	}
-	for _, session := range []string{"$0", "work::@8::0", "work%3A\\雪\n" + fake} {
+	for _, session := range []string{" ", ":", "::", `"'`, `\`, "\n", "\t", "café雪", "$0 @0 %0", "work::@8::0", "work%3A\\雪\n" + fake} {
 		t.Run("session/"+session, func(t *testing.T) {
-			row := fmt.Sprintf("%d::%s%s", len(session), session, windowInventoryRow(ordinary))
-			windows, err := parseAllWindowsOutput(strings.Split(row+"\n", "\n"))
+			fields := windowInventoryFields()
+			fields[1] = session
+			row := inventoryRow(windowInventorySchema, fields)
+			windows, err := parseAllWindowsOutput(row + "\n")
 			require.NoError(t, err)
 			require.Equal(t, map[string][]model.TmuxWindow{session: {ordinary}}, windows)
+			scoped, err := parseTmuxWindowsOutput(row)
+			require.NoError(t, err)
+			require.Equal(t, []*model.TmuxWindow{&ordinary}, scoped)
 		})
 	}
 }
 
 func TestWindowInventoryRejectsMalformedRecords(t *testing.T) {
-	ordinary := model.TmuxWindow{ID: "@7", Index: 4, Name: "notes", Path: "/tmp/A", ServerGeneration: "101:1700000000:/tmp/socket"}
-	valid := windowInventoryRow(ordinary)
-	payload := ordinary.Name + ordinary.Path + ordinary.ServerGeneration
-	for _, record := range []string{
-		"malformed", "4::notes::/tmp/A::0::@7::" + ordinary.ServerGeneration,
-		"@7::4::0::5::6", valid[:len(valid)-1], valid + "::@8", valid + "\n\n",
-		"@7::::0::5::6::" + fmt.Sprint(len(ordinary.ServerGeneration)) + "::" + payload,
-		"@7::04::0::5::6::" + fmt.Sprint(len(ordinary.ServerGeneration)) + "::" + payload,
-		"@7::-4::0::5::6::" + fmt.Sprint(len(ordinary.ServerGeneration)) + "::" + payload,
-		"@7::4::true::5::6::" + fmt.Sprint(len(ordinary.ServerGeneration)) + "::" + payload,
-		"@7::4::0::05::6::" + fmt.Sprint(len(ordinary.ServerGeneration)) + "::" + payload,
-		"@7::4::0::-1::6::" + fmt.Sprint(len(ordinary.ServerGeneration)) + "::" + payload,
-		"@7::4::0::5::::" + fmt.Sprint(len(ordinary.ServerGeneration)) + "::" + payload,
-		"@7::4::0::5::6::18446744073709551616::" + payload,
-		"@7::4::0::5::6::" + fmt.Sprint(len(ordinary.ServerGeneration)+1) + "::" + payload,
+	fields := windowInventoryFields()
+	valid := inventoryRow(windowInventorySchema, fields)
+	assertMalformed := func(t *testing.T, bad string) {
+		t.Helper()
+		for _, output := range []string{bad, valid + "\n" + bad} {
+			windows, err := parseTmuxWindowsOutput(output)
+			require.Error(t, err)
+			require.Nil(t, windows, "no earlier valid window may escape")
+			all, err := parseAllWindowsOutput(output)
+			require.Error(t, err)
+			require.Nil(t, all, "no earlier valid session/window association may escape")
+		}
+	}
+	for i, record := range []string{
+		"malformed", strings.Replace(valid, "W1", "W2", 1), strings.Replace(valid, "W1", "S1", 1),
+		inventoryRow(windowInventorySchema, fields[:7]), inventoryRow(windowInventorySchema, append(fields, "extra")),
+		valid[:len(valid)-1], valid + "::@8", valid + "\n\n", valid + "\r\n", "\n" + valid,
+		strings.Replace(valid, `"notes"`, `notes`, 1), strings.Replace(valid, `"notes"`, `"bad\q"`, 1),
+		strings.Replace(valid, `"notes"`, "\"NUL\x00\"", 1), strings.Replace(valid, "$1", `"$1"`, 1),
+		strings.Repeat("x", maxInventoryBytes+1), strings.Repeat(valid+"\n", maxInventoryRecords+1),
 	} {
-		t.Run(record, func(t *testing.T) {
-			// Even an earlier valid record must not escape as partial authority.
-			windows, err := parseTmuxWindowsOutput([]string{valid, record})
-			require.Error(t, err)
-			require.Nil(t, windows)
-		})
+		t.Run("wire/"+fmt.Sprint(i), func(t *testing.T) { assertMalformed(t, record) })
 	}
-	for _, id := range []string{"", "@", "7", "$7", "@01", "@-1", "@+7", "@name", "@7.0", "@7suffix", "@18446744073709551616", "@7::@8"} {
-		t.Run("ID/"+id, func(t *testing.T) {
-			window := ordinary
-			window.ID = id
-			windows, err := parseTmuxWindowsOutput([]string{windowInventoryRow(window)})
-			require.Error(t, err)
-			require.Nil(t, windows)
-		})
+	for field, invalid := range map[int][]string{
+		0: {"", "$", "1", "@1", "$01", "$-1", "$+1", "$name", "$1suffix", "$18446744073709551616"},
+		1: {""},
+		2: {"", "@", "7", "$7", "@01", "@-1", "@+7", "@name", "@7.0", "@7suffix", "@18446744073709551616", "@7::@8"},
+		3: {"", "04", "-4", "+4", "4.0", "18446744073709551616"},
+		4: {"", "true", "2", "01"},
+		7: {"", "unknown", "101:0:/tmp/socket", "0:1700000000:/tmp/socket", "0101:1700000000:/tmp/socket", "101:1700000000:", "#{pid}:#{start_time}:#{socket_path}", "0::@7::" + fields[7], "101:1700000000:/tmp/\n@8", "101:1700000000:/tmp/\r@8"},
+	} {
+		for _, value := range invalid {
+			t.Run(fmt.Sprintf("field %d/%s", field, value), func(t *testing.T) {
+				values := append([]string(nil), fields...)
+				values[field] = value
+				assertMalformed(t, inventoryRow(windowInventorySchema, values))
+			})
+		}
 	}
-	for _, generation := range []string{"", "unknown", "101:0:/tmp/socket", "0:1700000000:/tmp/socket", "0101:1700000000:/tmp/socket", "101:1700000000:", "#{pid}:#{start_time}:#{socket_path}", "0::@7::" + ordinary.ServerGeneration, "101:1700000000:/tmp/\n@8"} {
-		t.Run("generation/"+generation, func(t *testing.T) {
-			window := ordinary
-			window.ServerGeneration = generation
-			windows, err := parseTmuxWindowsOutput(strings.Split(windowInventoryRow(window), "\n"))
-			require.Error(t, err)
-			require.Nil(t, windows)
-		})
-	}
-	for _, sessionPrefix := range []string{"", "0::", "04::work", "-4::work", "18446744073709551616::work", "999::work"} {
-		t.Run("session/"+sessionPrefix, func(t *testing.T) {
-			windows, err := parseAllWindowsOutput([]string{sessionPrefix + valid})
-			require.Error(t, err)
-			require.Nil(t, windows)
-		})
-	}
-	windows, err := parseTmuxWindowsOutput(nil)
+	windows, err := parseTmuxWindowsOutput("")
 	require.NoError(t, err)
 	require.Empty(t, windows)
+	all, err := parseAllWindowsOutput("")
+	require.NoError(t, err)
+	require.Empty(t, all)
+}
+
+func TestWindowInventoryRejectsPairedPartitions(t *testing.T) {
+	ordinary := model.TmuxWindow{ID: "@7", Index: 4, Active: true, Name: "notes", Path: "/tmp/A", ServerGeneration: "101:1700000000:/tmp/socket"}
+	gen := ordinary.ServerGeneration
+	fake := fmt.Sprintf("@8::5::0::5::6::%d::other/tmp/B", len(gen))
+	for _, test := range []struct {
+		name, path     string
+		nameSize, size int
+	}{
+		// Compensating stale lengths accept name "note" and path "s/tmp/A".
+		{"wrong field partition", ordinary.Path, 4, 7},
+		// A short stale cwd length exposes generation + a fake second record.
+		{"extra record", ordinary.Path + gen + "\n" + fake, 5, 6},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			legacy := fmt.Sprintf("@7::4::1::%d::%d::%d::%s%s%s", test.nameSize, test.size, len(gen), ordinary.Name, test.path, gen)
+			windows, err := parseTmuxWindowsOutput(legacy)
+			require.Error(t, err, "paired-length records are not a supported schema")
+			require.Nil(t, windows)
+			all, err := parseAllWindowsOutput("4::sesh" + legacy)
+			require.Error(t, err)
+			require.Nil(t, all)
+			window := ordinary
+			window.Path = test.path
+			quoted := windowInventoryRow(window)
+			windows, err = parseTmuxWindowsOutput(quoted)
+			require.NoError(t, err)
+			require.Equal(t, []*model.TmuxWindow{&window}, windows, "one native record stays one complete window")
+			all, err = parseAllWindowsOutput(quoted)
+			require.NoError(t, err)
+			require.Equal(t, map[string][]model.TmuxWindow{"sesh": {window}}, all)
+		})
+	}
+}
+
+func TestListWindowsRejectsEmptyVerifiedCapture(t *testing.T) {
+	s := shell.NewMockShell(t)
+	s.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "if-shell", "-F", "-t", "$1:", mock.Anything,
+		"'list-windows' '-t' '$1' '-F' '"+testWindowInventoryFormat+"'", "if-shell").Return(rawInventoryResult(""), nil).Once()
+	windows, err := NewTmux(nil, s, "custom-tmux").ListWindows("$1", "101:1700000000:/tmp/socket")
+	require.Error(t, err)
+	require.Nil(t, windows)
 }

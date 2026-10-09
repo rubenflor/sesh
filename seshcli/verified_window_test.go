@@ -27,8 +27,8 @@ func TestWindowListUsesVerifiedSessionID(t *testing.T) {
 				}, "\n")), nil)
 				s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$8", "--", model.SSHBridgeIdentityEnv).Return("", nil)
 				s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).Return(model.SSHBridgeIdentityEnv+"=ssh/host/work", nil)
-				s.EXPECT().ListCmd("tmux", "-u", "if-shell", "-F", "-t", "$8:", mock.Anything,
-					"'list-windows' '-t' '$8' '-F' '#{window_id}::#{window_index}::#{window_active}::#{n:window_name}::#{n:pane_current_path}::#{n:#{pid}:#{start_time}:#{socket_path}}::#{window_name}#{pane_current_path}#{pid}:#{start_time}:#{socket_path}'", "if-shell").Return(nil, nil).Once()
+				s.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", 16<<20, 64<<10, "-u", "if-shell", "-F", "-t", "$8:", mock.Anything,
+					`'list-windows' '-t' '$8' '-F' 'W1::#{session_id}::"#{q:session_name}"::#{window_id}::#{window_index}::#{window_active}::"#{q:window_name}"::"#{q:pane_current_path}"::"#{pid}:#{start_time}:#{q:socket_path}"'`, "if-shell").Return(rawInventoryResult(`W1::$8::"user"::@7::4::1::"notes"::"/user"::"`+generation+`"`), nil).Once()
 				base := NewBaseDeps()
 				base.Shell = s
 				root := &cobra.Command{Use: "sesh"}

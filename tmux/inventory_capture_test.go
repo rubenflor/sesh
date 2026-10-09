@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/joshmedeski/sesh/v2/execwrap"
+	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -29,21 +30,53 @@ func inventoryCaptureExecutable(t *testing.T, output, diagnostic string, status 
 	script := "#!/bin/sh\n" +
 		"if [ \"$1\" = show-environment ]; then printf '%s\\n' '-SESH_SSH_IDENTITY'; exit 0; fi\n" +
 		"[ \"$1\" = -u ] || exit 97\n" +
-		"case \"$2\" in list-sessions|list-panes) ;; *) exit 97 ;; esac\n" +
+		"case \"$2\" in list-sessions|list-panes|list-windows) ;; *) exit 97 ;; esac\n" +
 		"/bin/cat " + shell.Quote(stdout) + "\n/bin/cat " + shell.Quote(stderr) + " >&2\nexit " + strconv.Itoa(status) + "\n"
 	require.NoError(t, os.WriteFile(binary, []byte(script), 0700))
 	return binary
 }
 
 func TestInventoryCaptureProductionBoundary(t *testing.T) {
-	for _, kind := range []string{"sessions", "panes"} {
+	for _, kind := range []string{"sessions", "panes", "windows", "all windows"} {
 		t.Run(kind, func(t *testing.T) {
 			fields, row, display := sessionInventoryFields(), sessionInventoryRow, 17
 			if kind == "panes" {
 				fields, row, display = paneInventoryFields(), paneInventoryRow, 1
+			} else if kind == "windows" || kind == "all windows" {
+				fields, row, display = windowInventoryFields(), func(fields []string) string { return inventoryRow(windowInventorySchema, fields) }, 5
 			}
 			collect := func(t *testing.T, binary string) ([]string, error) {
 				tm := NewTmux(nil, shell.NewShell(execwrap.NewExec(), nil), binary)
+				if kind == "windows" || kind == "all windows" {
+					var windows []*model.TmuxWindow
+					var err error
+					if kind == "windows" {
+						windows, err = tm.ListWindows("")
+					} else {
+						all, allErr := tm.ListAllWindows()
+						err = allErr
+						windows = nil
+						for _, session := range all {
+							for _, window := range session {
+								windows = append(windows, &window)
+							}
+						}
+						if err != nil {
+							require.Nil(t, all)
+						}
+					}
+					if err != nil {
+						require.Nil(t, windows)
+						return nil, err
+					}
+					names := make([]string, len(windows))
+					for i, window := range windows {
+						require.Equal(t, "@7", window.ID)
+						require.Equal(t, fields[7], window.ServerGeneration)
+						names[i] = window.Name
+					}
+					return names, nil
+				}
 				if kind == "sessions" {
 					sessions, err := tm.ListSessions()
 					if err != nil {
@@ -155,13 +188,17 @@ func TestInventoryCaptureProductionBoundary(t *testing.T) {
 }
 
 func TestInventoryCaptureRejectsFailedAndUnverifiedResultsBeforeOwnership(t *testing.T) {
-	for _, kind := range []string{"sessions", "panes"} {
-		for _, failure := range []string{"exit", "limit", "cancel", "status only"} {
+	for _, kind := range []string{"sessions", "panes", "windows", "all windows"} {
+		for _, failure := range []string{"exit", "limit", "cancel", "deadline", "status only"} {
 			t.Run(kind+"/"+failure, func(t *testing.T) {
 				s := shell.NewMockShell(t)
 				output, args := sessionInventoryRow(sessionInventoryFields()), []any{"-u", "list-sessions", "-F", listsessionsformat()}
 				if kind == "panes" {
 					output, args = paneInventoryRow(paneInventoryFields()), []any{"-u", "list-panes", "-s", "-F", listpanesformat()}
+				} else if kind == "windows" {
+					output, args = inventoryRow(windowInventorySchema, windowInventoryFields()), []any{"-u", "list-windows", "-F", listWindowsFormat()}
+				} else if kind == "all windows" {
+					output, args = inventoryRow(windowInventorySchema, windowInventoryFields()), []any{"-u", "list-windows", "-a", "-F", listWindowsFormat()}
 				}
 				result, err := rawInventoryResult(output+"\n"), errors.New("failed command")
 				if failure == "limit" {
@@ -169,6 +206,9 @@ func TestInventoryCaptureRejectsFailedAndUnverifiedResultsBeforeOwnership(t *tes
 				}
 				if failure == "cancel" {
 					err = context.Canceled
+				}
+				if failure == "deadline" {
+					err = context.DeadlineExceeded
 				}
 				if failure == "status only" {
 					result.ExitCode = 23
@@ -180,9 +220,23 @@ func TestInventoryCaptureRejectsFailedAndUnverifiedResultsBeforeOwnership(t *tes
 					records, err := tm.ListSessions()
 					require.Error(t, err)
 					require.Nil(t, records)
-				} else {
+				} else if kind == "panes" {
 					records, err := tm.ListTmuxPanes()
 					require.Error(t, err)
+					require.Nil(t, records)
+				} else if kind == "windows" {
+					records, gotErr := tm.ListWindows("")
+					require.Error(t, gotErr)
+					if err != nil {
+						require.ErrorIs(t, gotErr, err)
+					}
+					require.Nil(t, records)
+				} else {
+					records, gotErr := tm.ListAllWindows()
+					require.Error(t, gotErr)
+					if err != nil {
+						require.ErrorIs(t, gotErr, err)
+					}
 					require.Nil(t, records)
 				}
 			})
@@ -206,6 +260,74 @@ func TestPaneInventoryEmptyTargetRequiresEmptySessionProbe(t *testing.T) {
 				require.Nil(t, panes)
 			}
 		})
+	}
+}
+
+func TestGuardedWindowCapturePreservesMissingServerFailure(t *testing.T) {
+	exitErr := environmentExitError(t)
+	for _, message := range []string{"no server running on /tmp/private49\n", "error connecting to /tmp/private49 (No such file or directory)\n", "no sessions\n"} {
+		t.Run(message, func(t *testing.T) {
+			s := shell.NewMockShell(t)
+			s.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "if-shell", "-F", "-t", "$1:", mock.Anything,
+				"'list-windows' '-t' '$1' '-F' '"+testWindowInventoryFormat+"'", "if-shell").Return(execwrap.CommandResult{Stderr: []byte(message), ExitCode: 1}, exitErr).Once()
+			windows, err := NewTmux(nil, s, "custom-tmux").ListWindows("$1", "101:1700000000:/tmp/socket")
+			require.ErrorIs(t, err, exitErr)
+			require.Nil(t, windows)
+		})
+	}
+}
+
+func TestWindowInventoryEmptyTargetRequiresEmptySessionProbe(t *testing.T) {
+	exitErr := environmentExitError(t)
+	for _, kind := range []string{"windows", "all windows"} {
+		for _, probe := range []struct {
+			name, output string
+			cause        error
+		}{
+			{"empty", "", nil},
+			{"nonempty", sessionInventoryRow(sessionInventoryFields()), nil},
+			{"malformed", "malformed", nil},
+			{"canceled", "", context.Canceled},
+			{"deadline", "", context.DeadlineExceeded},
+			{"limit", "", execwrap.ErrOutputLimit},
+		} {
+			t.Run(kind+"/"+probe.name, func(t *testing.T) {
+				s := shell.NewMockShell(t)
+				args := []any{"-u", "list-windows", "-F", listWindowsFormat()}
+				if kind == "all windows" {
+					args = []any{"-u", "list-windows", "-a", "-F", listWindowsFormat()}
+				}
+				s.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, args...).Return(execwrap.CommandResult{Stderr: []byte("no current target\n"), ExitCode: 1}, exitErr).Once()
+				s.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-sessions", "-F", listsessionsformat()).Return(rawInventoryResult(probe.output), probe.cause).Once()
+				tm := NewTmux(nil, s, "custom-tmux")
+				var err error
+				if kind == "windows" {
+					windows, gotErr := tm.ListWindows("")
+					err = gotErr
+					if probe.name != "empty" {
+						require.Nil(t, windows)
+					} else {
+						require.Empty(t, windows)
+					}
+				} else {
+					windows, gotErr := tm.ListAllWindows()
+					err = gotErr
+					if probe.name != "empty" {
+						require.Nil(t, windows)
+					} else {
+						require.Empty(t, windows)
+					}
+				}
+				if probe.name == "empty" {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, exitErr)
+					if probe.cause != nil {
+						require.ErrorIs(t, err, probe.cause)
+					}
+				}
+			})
+		}
 	}
 }
 

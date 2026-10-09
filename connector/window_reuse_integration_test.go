@@ -3,6 +3,7 @@
 package connector
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/oswrap"
@@ -362,16 +364,16 @@ func TestExistingWindowInventoryTextOnPrivateTmux(t *testing.T) {
 	}
 }
 
-// Removing only the new client option reproduces the pre-fix inventory call.
+// Removing only -u checks byte fidelity without changing the quoted schema.
 type windowInventoryWithoutUTF8Shell struct {
 	*panePrivateShell
 }
 
-func (s *windowInventoryWithoutUTF8Shell) ListCmd(binary string, args ...string) ([]string, error) {
+func (s *windowInventoryWithoutUTF8Shell) CmdCaptureRaw(ctx context.Context, binary string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
 	if len(args) != 0 && args[0] == "-u" {
 		args = args[1:]
 	}
-	return s.panePrivateShell.ListCmd(binary, args...)
+	return s.panePrivateShell.CmdCaptureRaw(ctx, binary, stdoutLimit, stderrLimit, args...)
 }
 
 func TestExistingWindowInventoryCLocaleSessionOnPrivateTmux(t *testing.T) {
@@ -408,7 +410,7 @@ func TestExistingWindowInventoryCLocaleSessionOnPrivateTmux(t *testing.T) {
 	nameA, nameB := fakeName(4, "notes"), fakeName(5, "other")
 	header := fmt.Sprintf("@7::4::1::%d::%d::%d::", len(nameA), len(fixture.dir), len(generation))
 	// Each 雪 is three bytes but is sanitized into two underscores without -u.
-	// The missing bytes exactly consume @7's header in the pre-fix parser.
+	// Keep the old header-shaped display bytes to prove they no longer shift IDs.
 	sessionName := strings.Repeat("雪", len(header))
 	require.Equal(t, "$1 @7", run("new-session", "-d", "-P", "-F", "#{session_id} #{window_id}", "-s", sessionName, "-n", nameA, "-c", fixture.dir, "--", "exec sleep 120"))
 	run("set-environment", "-t", "$1", model.SSHBridgeIdentityEnv, "")
@@ -420,10 +422,14 @@ func TestExistingWindowInventoryCLocaleSessionOnPrivateTmux(t *testing.T) {
 
 	legacy := tmux.NewTmux(nil, &windowInventoryWithoutUTF8Shell{panePrivateShell: private}, binary)
 	corrupted, err := legacy.ListAllWindows()
-	require.NoError(t, err, "the old call accepts the corrupted record without an error")
-	corruptedSession := strings.Repeat("_", 2*len(header)) + header
-	require.Equal(t, []model.TmuxWindow{{ID: "@8", Index: 4, Name: "notes", Path: fixture.dir, ServerGeneration: generation}}, corrupted[corruptedSession], "real @7's display payload becomes a trusted @8 with the real generation")
-	t.Logf("without -u: session declares %d bytes but emits %d; real @7 parses as @8", len(sessionName), 2*len(header))
+	require.NoError(t, err)
+	corruptedSession := strings.Repeat("_", 2*len(header))
+	require.NotContains(t, corrupted, sessionName)
+	require.Equal(t, []model.TmuxWindow{
+		{ID: "@7", Index: 4, Active: true, Name: nameA, Path: fixture.dir, ServerGeneration: generation},
+		{ID: "@8", Index: 5, Name: nameB, Path: fixture.dir, ServerGeneration: generation},
+	}, corrupted[corruptedSession], "losing UTF-8 must not turn display headers into native IDs")
+	t.Logf("without -u: session emits %d rather than %d bytes; quoted boundaries retain both real window IDs", 2*len(header), len(sessionName))
 
 	realTmux := tmux.NewTmux(nil, private, binary)
 	_, err = realTmux.CapturePane("$1:@8", generation)

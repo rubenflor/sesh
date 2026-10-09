@@ -23,10 +23,14 @@ const (
 func (t *RealTmux) captureInventory(args ...string) (string, error) {
 	result, err := t.shell.CmdCaptureRaw(context.Background(), t.bin, maxInventoryBytes, maxInventoryStderr, args...)
 	if err != nil {
+		// Missing-server errors cannot satisfy a verified session's command guard.
+		if len(args) > 1 && args[1] == "if-shell" {
+			return "", err
+		}
 		if emptyInventoryFailure(result, err) {
 			return "", nil
 		}
-		if len(args) > 1 && args[1] == "list-panes" && inventoryExitOne(result, err) {
+		if len(args) > 1 && (args[1] == "list-panes" || args[1] == "list-windows") && inventoryExitOne(result, err) {
 			message := strings.TrimSuffix(string(result.Stderr), "\n")
 			if message == "no current target" || message == "no current session" {
 				// A missing current target is empty only if session inventory proves it.

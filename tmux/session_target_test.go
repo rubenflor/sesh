@@ -7,6 +7,7 @@ import (
 	"github.com/joshmedeski/sesh/v2/oswrap"
 	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,8 +47,8 @@ func TestVerifiedSessionCommandsCarryGeneration(t *testing.T) {
 				_, err := tm.AttachSession("$1", generation)
 				require.ErrorIs(t, err, assert.AnError)
 			} else {
-				s.EXPECT().ListCmd("custom-tmux", "-u", "if-shell", "-F", "-t", "$1:", condition,
-					"'list-windows' '-t' '$1' '-F' '"+testWindowInventoryFormat+"'", "if-shell").Return([]string{windowInventoryRow(model.TmuxWindow{ID: "@7", ServerGeneration: generation, Index: 4, Name: "notes", Path: "/original", Active: true})}, nil).Once()
+				s.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "if-shell", "-F", "-t", "$1:", condition,
+					"'list-windows' '-t' '$1' '-F' '"+testWindowInventoryFormat+"'", "if-shell").Return(rawInventoryResult(windowInventoryRow(model.TmuxWindow{ID: "@7", ServerGeneration: generation, Index: 4, Name: "notes", Path: "/original", Active: true})), nil).Once()
 				windows, err := tm.ListWindows("$1", generation)
 				require.NoError(t, err)
 				require.Equal(t, []*model.TmuxWindow{{ID: "@7", ServerGeneration: generation, Index: 4, Name: "notes", Path: "/original", Active: true}}, windows)
