@@ -29,10 +29,10 @@ func bridgeOperationsBase(t *testing.T, marker string) (*BaseDeps, string) {
 	const identityFormat = "#{session_id}::#{pid}:#{start_time}:#{socket_path}"
 	s.On("Cmd", "tmux", "display-message", "-p", identityFormat).Return("$1::"+generation, nil).Maybe()
 	s.On("Cmd", "tmux", "display-message", "-p", "-t", "$1:", identityFormat).Return("$1::"+generation, nil).Maybe()
-	s.On("ListCmd", "tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-		strings.Join([]string{"100", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "100", "0", "0", "renamed-bridge", "/bridge", "", "1", generation}, "::"),
-		strings.Join([]string{"200", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", "other-client", "/local", "", "1", generation}, "::"),
-	}, nil)
+	s.On("CmdCaptureRaw", mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(strings.Join([]string{
+		sessionInventoryRow([]string{"100", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "100", "0", "0", "renamed-bridge", "/bridge", "", "1", generation}),
+		sessionInventoryRow([]string{"200", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", "other-client", "/local", "", "1", generation}),
+	}, "\n")), nil)
 	s.On("CmdCapture", "tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
 		Return(model.SSHBridgeIdentityEnv+"="+marker, nil)
 	s.On("CmdCapture", "tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).

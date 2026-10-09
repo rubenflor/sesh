@@ -17,6 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/joshmedeski/sesh/v2/cache"
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/shell"
@@ -118,6 +119,13 @@ func (s *deletionPrivateShell) Cmd(_ string, args ...string) (string, error) {
 func (s *deletionPrivateShell) CmdCapture(_ string, args ...string) (string, error) {
 	s.recordKill(args)
 	return s.run(args...)
+}
+
+func (s *deletionPrivateShell) CmdCaptureRaw(ctx context.Context, _ string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	args = append([]string{"-u", "TMUX", "-u", "TMUX_PANE", "-u", "SESH_CLIENT", s.binary, "-S", s.socket, "-f", "/dev/null"}, args...)
+	return shell.NewShell(execwrap.NewExec(), nil).CmdCaptureRaw(ctx, "/usr/bin/env", stdoutLimit, stderrLimit, args...)
 }
 
 func (s *deletionPrivateShell) ListCmd(_ string, args ...string) ([]string, error) {

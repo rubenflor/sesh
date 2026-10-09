@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/shell"
@@ -74,6 +75,13 @@ func (s *lastPrivateShell) CmdWithOutput(cmd string, args ...string) (string, er
 
 func (s *lastPrivateShell) CmdCapture(_ string, args ...string) (string, error) {
 	return s.run(args...)
+}
+
+func (s *lastPrivateShell) CmdCaptureRaw(ctx context.Context, _ string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	command := []string{"-u", "TMUX", "-u", "TMUX_PANE", "-u", "SESH_CLIENT", "-u", model.SSHBridgeIdentityEnv, "SHELL=/bin/sh", s.binary, "-S", s.socket, "-f", "/dev/null"}
+	return shell.NewShell(execwrap.NewExec(), nil).CmdCaptureRaw(ctx, "/usr/bin/env", stdoutLimit, stderrLimit, append(command, args...)...)
 }
 
 func (s *lastPrivateShell) ListCmd(_ string, args ...string) ([]string, error) {

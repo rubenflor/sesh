@@ -1,9 +1,11 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,6 +88,10 @@ func (f *fakeShell) CmdInDir(dir string, cmd string, args ...string) (string, er
 
 func (f *fakeShell) CmdCapture(cmd string, args ...string) (string, error) {
 	return f.out, f.err
+}
+
+func (f *fakeShell) CmdCaptureRaw(context.Context, string, int, int, ...string) (execwrap.CommandResult, error) {
+	panic("unexpected raw inventory capture in Git tests")
 }
 
 func (f *fakeShell) CmdWithOutput(cmd string, args ...string) (string, error) {

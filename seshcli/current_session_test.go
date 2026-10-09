@@ -3,6 +3,7 @@ package seshcli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/joshmedeski/sesh/v2/git"
@@ -27,17 +28,17 @@ func TestCurrentSessionCallersUseVerifiedInventoryMetadata(t *testing.T) {
 			require.NoError(t, os.WriteFile(configPath, []byte("cache = false\n"), 0600))
 			s := shell.NewMockShell(t)
 			rows := []string{
-				"200::::1::::100::0::::0::::::0::0::0::$1::200::0::0::a::" + pathA + "::::3::" + generation,
-				"100::::1::::100::0::::0::::::0::0::0::$2::100::0::0::b::" + pathB + "::::1::" + generation,
+				sessionInventoryRow([]string{"200", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "200", "0", "0", "a", pathA, "", "3", generation}),
+				sessionInventoryRow([]string{"100", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "100", "0", "0", "b", pathB, "", "1", generation}),
 			}
-			inventory := s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return(rows, nil).Once()
+			inventory := s.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(strings.Join(rows, "\n")), nil).Once()
 			// The current display name has become b; only ID $1 is authoritative.
 			s.EXPECT().Cmd("tmux", "display-message", "-p", identityFormat).Return("$1::"+generation, nil).Once().NotBefore(inventory)
 			s.EXPECT().Cmd("tmux", "display-message", "-p", "-t", "$1:", identityFormat).Return("$1::"+generation, nil).Once()
 			inventoryReads := 1
 			if caller == "implicit window connect" {
 				// Revalidation retains the selected ID and its session root.
-				s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return(rows, nil).Once()
+				s.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(strings.Join(rows, "\n")), nil).Once()
 				inventoryReads++
 				s.EXPECT().CmdCapture("tmux", "if-shell", "-F", "-t", "$1:", mock.Anything,
 					"'new-window' '-P' '-F' '#{session_name}:#{window_index}' '-c' "+shell.Quote(pathA)+" '-d' '-t' '$1:'", "if-shell").Return("b:1", nil).Once()

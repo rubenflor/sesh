@@ -3,6 +3,7 @@ package execwrap
 import (
 	"bytes"
 	"context"
+	"io"
 	"os/exec"
 	"time"
 )
@@ -50,25 +51,26 @@ func (e *OsExec) Command(name string, args ...string) ExecCmd {
 // descendants cannot outlive discovery while retaining inherited pipes.
 // Platforms without Unix process-group cleanup are rejected before spawning.
 func (e *OsExec) RunContext(ctx context.Context, name string, args ...string) (CommandResult, error) {
+	var stdout, stderr bytes.Buffer
+	exitCode, err := runContext(ctx, name, &stdout, &stderr, args...)
+	return CommandResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: exitCode}, err
+}
+
+func runContext(ctx context.Context, name string, stdout, stderr io.Writer, args ...string) (int, error) {
 	command := exec.CommandContext(ctx, name, args...)
 	command.WaitDelay = 250 * time.Millisecond
 	cleanup, err := prepareProcessCleanup(command)
 	if err != nil {
-		return CommandResult{ExitCode: -1}, err
+		return -1, err
 	}
 	defer cleanup()
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
+	command.Stdout = stdout
+	command.Stderr = stderr
 
 	err = command.Run()
-	result := CommandResult{
-		Stdout:   stdout.Bytes(),
-		Stderr:   stderr.Bytes(),
-		ExitCode: -1,
-	}
+	exitCode := -1
 	if command.ProcessState != nil {
-		result.ExitCode = command.ProcessState.ExitCode()
+		exitCode = command.ProcessState.ExitCode()
 	}
-	return result, err
+	return exitCode, err
 }

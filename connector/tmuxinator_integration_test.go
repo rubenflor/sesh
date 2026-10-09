@@ -1,6 +1,7 @@
 package connector
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/oswrap"
@@ -39,11 +41,11 @@ func (s *tmuxinatorPrivateShell) CmdWithOutput(cmd string, args ...string) (stri
 	return s.Cmd(cmd, args...)
 }
 
-func (s *tmuxinatorPrivateShell) ListCmd(cmd string, args ...string) ([]string, error) {
-	if args[0] == "list-sessions" {
+func (s *tmuxinatorPrivateShell) CmdCaptureRaw(ctx context.Context, cmd string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	if args[0] == "-u" && args[1] == "list-sessions" {
 		s.lists++
 	}
-	return s.panePrivateShell.ListCmd(cmd, args...)
+	return s.panePrivateShell.CmdCaptureRaw(ctx, cmd, stdoutLimit, stderrLimit, args...)
 }
 
 func TestTmuxinatorConnectUsesVerifiedIDOnPrivateTmux(t *testing.T) {

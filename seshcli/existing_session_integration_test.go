@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/joshmedeski/sesh/v2/connector"
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/focuser"
 	"github.com/joshmedeski/sesh/v2/github"
 	"github.com/joshmedeski/sesh/v2/lister"
@@ -234,6 +235,24 @@ func (s *existingPrivateTmux) CmdCapture(_ string, args ...string) (string, erro
 	return s.command(args...)
 }
 
+func (s *existingPrivateTmux) CmdCaptureRaw(ctx context.Context, _ string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	inventory := args[0] == "-u" && args[1] == "list-sessions"
+	if inventory && s.attached {
+		args = append([]string(nil), args...)
+		args[3] = strings.ReplaceAll(args[3], "#{session_attached}", "#{?#{==:#{session_id},$1},1,#{session_attached}}")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	command := []string{"-u", "TMUX", "-u", "TMUX_PANE", "-u", "SESH_CLIENT", "-u", model.SSHBridgeIdentityEnv, "SHELL=/bin/sh", s.binary, "-S", s.socket, "-f", "/dev/null"}
+	result, err := shell.NewShell(execwrap.NewExec(), nil).CmdCaptureRaw(ctx, "/usr/bin/env", stdoutLimit, stderrLimit, append(command, args...)...)
+	if err == nil && inventory && s.afterInventory != nil {
+		after := s.afterInventory
+		s.afterInventory = nil
+		after()
+	}
+	return result, err
+}
+
 func (s *existingPrivateTmux) CmdWithOutput(_ string, args ...string) (string, error) {
 	return s.command(args...)
 }
@@ -243,24 +262,7 @@ func (s *existingPrivateTmux) ListCmd(_ string, args ...string) ([]string, error
 		return []string{"private-client::/dev/private::$0::100"}, nil
 	}
 	out, err := s.command(args...)
-	lines := strings.Split(out, "\n")
-	if err == nil && args[0] == "list-sessions" {
-		if s.attached {
-			for i, line := range lines {
-				fields := strings.SplitN(line, "::", 22)
-				if len(fields) == 22 && fields[13] == "$1" {
-					fields[2] = "1"
-					lines[i] = strings.Join(fields, "::")
-				}
-			}
-		}
-		if s.afterInventory != nil {
-			after := s.afterInventory
-			s.afterInventory = nil
-			after()
-		}
-	}
-	return lines, err
+	return strings.Split(out, "\n"), err
 }
 
 func (s *existingPrivateTmux) commandRoot(cmd *cobra.Command) *cobra.Command {

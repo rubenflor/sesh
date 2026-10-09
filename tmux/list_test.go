@@ -13,15 +13,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func sessionInventoryRow(fields []string) string {
+	return inventoryRow(sessionInventorySchema, fields)
+}
+
+func sessionInventoryFields() []string {
+	return []string{"1714092246", "", "0", "", "1714089765", "1", "", "", "", "", "", "", "0", "$1", "1714092246", "0", "0", "normal", "/tmp", "2,1", "2", "101:1700000000:/tmp/tmux-fixture"}
+}
+
 func TestListSessionsIncludesBridgeMetadata(t *testing.T) {
 	s := shell.NewMockShell(t)
 	tm := &RealTmux{shell: s, bin: "tmux"}
-	s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.MatchedBy(func(format string) bool {
-		return !strings.Contains(format, "#{SESH_SSH_IDENTITY}") && strings.HasSuffix(format, serverGenerationFormat)
-	})).Return([]string{
-		"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::renamed-bridge::/tmp::2,1::2::101:1700000000:/tmp/tmux::fixture",
-		"1714092246::::0::::1714089765::1::::::::::::::0::$2::1714092245::0::0::sesh-ssh-user::/tmp::2,1::2::101:1700000000:/tmp/tmux::fixture",
-	}, nil).Once()
+	s.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-sessions", "-F", mock.MatchedBy(func(format string) bool {
+		return !strings.Contains(format, "#{SESH_SSH_IDENTITY}") && strings.HasSuffix(format, inventoryGenerationFormat)
+	})).Return(rawInventoryResult(strings.Join([]string{
+		sessionInventoryRow(strings.SplitN("1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::renamed-bridge::/tmp::2,1::2::101:1700000000:/tmp/tmux::fixture", "::", 22)),
+		sessionInventoryRow(strings.SplitN("1714092246::::0::::1714089765::1::::::::::::::0::$2::1714092245::0::0::sesh-ssh-user::/tmp::2,1::2::101:1700000000:/tmp/tmux::fixture", "::", 22)),
+	}, "\n")), nil).Once()
 	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
 		Return("SESH_SSH_IDENTITY=ssh/host/work%2F1", nil).Once()
 	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).
@@ -41,24 +49,39 @@ func TestListSessionsIncludesBridgeMetadata(t *testing.T) {
 }
 
 func TestSessionGenerationMetadataFailsClosed(t *testing.T) {
-	const row = "1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::normal::/tmp::2,1::2"
 	for _, generation := range []string{"", "101::/tmp/socket", ":1700000000:/tmp/socket", "101:1700000000:", "#{pid}:#{start_time}:#{socket_path}"} {
 		t.Run(generation, func(t *testing.T) {
-			sessions, err := parseTmuxSessionsOutput([]string{row + "::" + generation})
-			require.NoError(t, err)
-			require.Len(t, sessions, 1)
-			require.Equal(t, "$1", sessions[0].ID)
-			require.Empty(t, sessions[0].ServerGeneration)
+			fields := sessionInventoryFields()
+			fields[21] = generation
+			sessions, err := parseTmuxSessionsOutput(sessionInventoryRow(fields))
+			require.Error(t, err)
+			require.Nil(t, sessions)
 		})
 	}
+}
+
+func TestSessionInventoryPreservesAllPublicMetadata(t *testing.T) {
+	fields := []string{"1714092246", "1:activity,2:bell", "2", "client::one,client\t雪", "1714089765", "1", `group::"\雪`, "3", "attached\nclient,other", "session::one,$0", "1", "4", "1", "$1", "1714092245", "1", "1", `name::"\雪`, "/tmp/space ::\n\t雪", "2,1", "5", "101:1700000000:/tmp/socket::\t雪"}
+	sessions, err := parseTmuxSessionsOutput(sessionInventoryRow(fields))
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	activity := time.Unix(1714092246, 0)
+	created := time.Unix(1714089765, 0)
+	lastAttached := time.Unix(1714092245, 0)
+	require.Equal(t, &model.TmuxSession{
+		Activity: &activity, Alerts: []string{"1:activity", "2:bell"}, Attached: 2,
+		AttachedList: []string{"client::one", "client\t雪"}, Created: &created, Format: true,
+		Group: fields[6], GroupAttached: 3, GroupAttachedList: []string{"attached\nclient", "other"},
+		GroupList: []string{"session::one", "$0"}, GroupManyAttached: true, GroupSize: 4, Grouped: true,
+		ID: "$1", ServerGeneration: fields[21], LastAttached: &lastAttached, ManyAttached: true,
+		Marked: true, Name: fields[17], Path: fields[18], Stack: []int{2, 1}, Windows: 5,
+	}, sessions[0])
 }
 
 func TestListSessionsPropagatesBridgeMarkerLookupFailure(t *testing.T) {
 	wantErr := errors.New("session disappeared")
 	s := shell.NewMockShell(t)
-	s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-		"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::normal::/tmp::2,1::2",
-	}, nil).Once()
+	s.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(sessionInventoryRow(sessionInventoryFields())), nil).Once()
 	s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
 		Return("", wantErr).Once()
 
@@ -73,7 +96,7 @@ func TestListSessions(t *testing.T) {
 	t.Run("List tmux session", func(t *testing.T) {
 		mockShell := &shell.MockShell{}
 		tmux := &RealTmux{shell: mockShell, bin: "tmux"}
-		mockShell.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return([]string{"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::sesh/main::/Users/joshmedeski/c/sesh/main::2,1::2"},
+		mockShell.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(sessionInventoryRow(strings.Split("1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::sesh/main::/Users/joshmedeski/c/sesh/main::2,1::2::101:1700000000:/tmp/tmux-fixture", "::"))),
 			nil,
 		)
 		mockShell.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
@@ -88,9 +111,7 @@ func TestListSessions(t *testing.T) {
 	})
 
 	t.Run("parseTmuxSessionsOutput", func(t *testing.T) {
-		rawSessions := []string{
-			"1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::sesh/main::/Users/joshmedeski/c/sesh/main::2,1::2",
-		}
+		rawSessions := sessionInventoryRow(strings.Split("1714092246::::0::::1714089765::1::::::::::::::0::$1::1714092246::0::0::sesh/main::/Users/joshmedeski/c/sesh/main::2,1::2::101:1700000000:/tmp/tmux-fixture", "::"))
 		sessions, err := parseTmuxSessionsOutput(rawSessions)
 		assert.Nil(t, err)
 		require.Len(t, sessions, 1)

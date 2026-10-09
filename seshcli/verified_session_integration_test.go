@@ -279,7 +279,7 @@ func TestNewLocalSessionUsesVerifiedIDOnPrivateTmux(t *testing.T) {
 				keysSent := filepath.Join(dir, "rename-keys-sent")
 				server := shell.Quote(binary) + " -S " + shell.Quote(socket) + " -f /dev/null"
 				script := "#!/bin/sh\n" +
-					"op=$1; target=; previous=; for arg in \"$@\"; do [ \"$previous\" != -t ] || target=$arg; previous=$arg; done\n" +
+					"op=$1; [ \"$op\" != -u ] || op=$2; target=; previous=; for arg in \"$@\"; do [ \"$previous\" != -t ] || target=$arg; previous=$arg; done\n" +
 					"case \"$op\" in\n" +
 					"send-keys|new-window|next-window|attach-session) printf '%s %s\\n' \"$op\" \"$target\" >> " + shell.Quote(operations) + ";;\nesac\n" +
 					"if [ -f " + shell.Quote(keysSent) + " ] && { [ \"$op\" = list-sessions ] || [ \"$op\" = list-windows ] || [ \"$op\" = new-window ]; }; then i=0; while [ ! -f " + shell.Quote(startupDone) + " ] && [ \"$i\" -lt 300 ]; do sleep 0.01; i=$((i+1)); done; [ -f " + shell.Quote(startupDone) + " ] || exit 97; fi\n" +

@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,26 +11,30 @@ import (
 	"github.com/joshmedeski/sesh/v2/shell"
 )
 
-func listpanesformat() string {
-	variables := []string{
+var paneInventorySchema = inventorySchema{
+	tag: "P1",
+	fields: []string{
 		"#{window_index}",
-		"#{window_name}",
+		`"#{q:window_name}"`,
 		"#{pane_index}",
-		"#{pane_title}",
-		"#{pane_current_command}",
-		"#{pane_current_path}",
+		`"#{q:pane_title}"`,
+		`"#{q:pane_current_command}"`,
+		`"#{q:pane_current_path}"`,
 		"#{pane_id}",
 		"#{session_id}",
 		"#{window_id}",
-		serverGenerationFormat,
-	}
-	return strings.Join(variables, separator)
+		inventoryGenerationFormat,
+	},
+}
+
+func listpanesformat() string {
+	return paneInventorySchema.format()
 }
 
 func (t *RealTmux) ListTmuxPanes() ([]*model.TmuxPane, error) {
-	output, err := t.shell.ListCmd(t.bin, "list-panes", "-s", "-F", listpanesformat())
+	output, err := t.captureInventory("-u", "list-panes", "-s", "-F", listpanesformat())
 	if err != nil {
-		return []*model.TmuxPane{}, nil
+		return nil, err
 	}
 	panes, err := parseTmuxPanesOutput(output)
 	if err != nil {
@@ -50,26 +55,36 @@ func (t *RealTmux) ListTmuxPanes() ([]*model.TmuxPane, error) {
 	return panes, nil
 }
 
-func parseTmuxPanesOutput(rawList []string) ([]*model.TmuxPane, error) {
-	panes := make([]*model.TmuxPane, 0, len(rawList))
-	for _, line := range rawList {
-		fields := strings.SplitN(line, separator, 10)
-		if len(fields) != 9 && len(fields) != 10 {
-			continue
+func parseTmuxPanesOutput(output string) ([]*model.TmuxPane, error) {
+	records, err := paneInventorySchema.decode(output)
+	if err != nil {
+		return nil, err
+	}
+	panes := make([]*model.TmuxPane, 0, len(records))
+	for _, fields := range records {
+		if !validTmuxID(fields[6], "%") || !validTmuxID(fields[7], "$") || !validWindowID(fields[8]) {
+			return nil, errors.New("unverified tmux pane inventory identity")
+		}
+		for _, i := range []int{0, 2} {
+			index, err := strconv.Atoi(fields[i])
+			if err != nil || index < 0 || strconv.Itoa(index) != fields[i] {
+				return nil, errors.New("malformed tmux pane inventory index")
+			}
+		}
+		if !validServerGeneration(fields[9]) {
+			return nil, errors.New("unverified tmux pane inventory generation")
 		}
 		pane := &model.TmuxPane{
-			WindowIndex: convert.StringToInt(fields[0]),
-			WindowName:  fields[1],
-			PaneIndex:   convert.StringToInt(fields[2]),
-			PaneTitle:   fields[3],
-			PaneCommand: fields[4],
-			PanePath:    fields[5],
-			PaneID:      fields[6],
-			SessionID:   fields[7],
-			WindowID:    fields[8],
-		}
-		if len(fields) == 10 && validServerGeneration(fields[9]) {
-			pane.ServerGeneration = fields[9]
+			WindowIndex:      convert.StringToInt(fields[0]),
+			WindowName:       fields[1],
+			PaneIndex:        convert.StringToInt(fields[2]),
+			PaneTitle:        fields[3],
+			PaneCommand:      fields[4],
+			PanePath:         fields[5],
+			PaneID:           fields[6],
+			SessionID:        fields[7],
+			WindowID:         fields[8],
+			ServerGeneration: fields[9],
 		}
 		panes = append(panes, pane)
 	}

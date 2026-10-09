@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,9 @@ type Shell interface {
 	// that need to salvage it use this instead and decide for themselves
 	// whether the output is usable.
 	CmdCapture(cmd string, arg ...string) (string, error)
+	// CmdCaptureRaw retains exact stdout/stderr bytes within separate limits.
+	// On failure, any returned bytes are diagnostic and must not be authoritative.
+	CmdCaptureRaw(ctx context.Context, cmd string, stdoutLimit, stderrLimit int, arg ...string) (execwrap.CommandResult, error)
 	ListCmd(cmd string, arg ...string) ([]string, error)
 	PrepareCmd(cmd string, replacements map[string]string) ([]string, error)
 	// ShellCmd runs cmd through the user's shell (honoring $SHELL, falling
@@ -106,6 +110,18 @@ func (c *RealShell) CmdCapture(cmd string, args ...string) (string, error) {
 		return out, fmt.Errorf("%s: %w", cmd, runErr)
 	}
 	return out, nil
+}
+
+func (c *RealShell) CmdCaptureRaw(ctx context.Context, cmd string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	foundCmd, err := c.exec.LookPath(cmd)
+	if err != nil {
+		return execwrap.CommandResult{ExitCode: -1}, err
+	}
+	result, err := execwrap.RunContextBounded(ctx, foundCmd, stdoutLimit, stderrLimit, args...)
+	if err != nil {
+		return result, fmt.Errorf("%s: %w: %s", cmd, err, strings.TrimSpace(string(result.Stderr)))
+	}
+	return result, nil
 }
 
 func (c *RealShell) CmdWithOutput(cmd string, args ...string) (string, error) {

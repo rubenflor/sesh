@@ -21,10 +21,10 @@ func TestWindowListUsesVerifiedSessionID(t *testing.T) {
 				const generation = "101:1700000000:/tmp/tmux-fixture"
 				require.NoError(t, os.WriteFile(config, nil, 0600))
 				s := shell.NewMockShell(t)
-				s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-					strings.Join([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$8", "100", "0", "0", name, "/user", "", "1", generation}, "::"),
-					strings.Join([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "100", "0", "0", "bridge", "/bridge", "", "1", generation}, "::"),
-				}, nil)
+				s.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(strings.Join([]string{
+					sessionInventoryRow([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$8", "100", "0", "0", name, "/user", "", "1", generation}),
+					sessionInventoryRow([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "100", "0", "0", "bridge", "/bridge", "", "1", generation}),
+				}, "\n")), nil)
 				s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$8", "--", model.SSHBridgeIdentityEnv).Return("", nil)
 				s.EXPECT().CmdCapture("tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).Return(model.SSHBridgeIdentityEnv+"=ssh/host/work", nil)
 				s.EXPECT().ListCmd("tmux", "-u", "if-shell", "-F", "-t", "$8:", mock.Anything,

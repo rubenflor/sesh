@@ -24,6 +24,23 @@ import (
 const integrationSSHIdentity = "ssh/first/nutiliti%2F2345%25%20caf%C3%A9"
 const integrationUserCollision = "sesh-ssh-f89c7664900e54d378d5c534-0"
 
+func sessionInventoryRow(fields []string) string {
+	quoted := append([]string(nil), fields...)
+	for _, i := range []int{1, 3, 6, 8, 9, 17, 18, 19, 21} {
+		var value strings.Builder
+		value.WriteByte('"')
+		for j := 0; j < len(fields[i]); j++ {
+			if strings.IndexByte("|&;<>()$`\\\"'*?[# =%", fields[i][j]) >= 0 {
+				value.WriteByte('\\')
+			}
+			value.WriteByte(fields[i][j])
+		}
+		value.WriteByte('"')
+		quoted[i] = value.String()
+	}
+	return "S1::" + strings.Join(quoted, "::")
+}
+
 // Load a real config and dependency graph. Only external process, filesystem
 // resolution, and interactive picker boundaries are replaced; tmux metadata
 // parsing, source aggregation, caching, and connection dispatch stay real.
@@ -55,15 +72,16 @@ func sshIntegrationDeps(t *testing.T, caching bool) (*Deps, *shell.MockShell, *e
 			Return(result, err).Maybe()
 	}
 	s := shell.NewMockShell(t)
-	s.On("ListCmd", "tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-		strings.Join([]string{"300", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "300", "0", "0", "renamed-bridge", "/bridge", "", "1", "101:1700000000:/tmp/tmux-fixture"}, "::"),
-		strings.Join([]string{"200", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", integrationUserCollision, "/user", "", "1", "101:1700000000:/tmp/tmux-fixture"}, "::"),
-	}, nil).Maybe()
+	s.On("CmdCaptureRaw", mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(strings.Join([]string{
+		sessionInventoryRow([]string{"300", "", "1", "", "100", "0", "", "0", "", "", "0", "0", "0", "$1", "300", "0", "0", "renamed-bridge", "/bridge", "", "1", "101:1700000000:/tmp/tmux-fixture"}),
+		sessionInventoryRow([]string{"200", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "200", "0", "0", integrationUserCollision, "/user", "", "1", "101:1700000000:/tmp/tmux-fixture"}),
+	}, "\n")), nil).Maybe()
 	s.On("CmdCapture", "tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).
 		Return(model.SSHBridgeIdentityEnv+"="+integrationSSHIdentity, nil).Maybe()
 	s.On("CmdCapture", "tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).
 		Return("", nil).Maybe()
 	s.On("ListCmd", "tmux", "list-windows", "-a", "-F", mock.Anything).Return([]string{}, nil).Maybe()
+	s.On("ListCmd", "tmux", "-u", "list-windows", "-a", "-F", mock.Anything).Return([]string{}, nil).Maybe()
 	s.On("ListCmd", "tmuxinator", "list", "-n").Return(nil, assert.AnError).Maybe()
 	s.On("PrepareCmd", "zoxide query --list --score", map[string]string{}).
 		Return([]string{"zoxide", "query", "--list", "--score"}, nil).Maybe()
@@ -165,10 +183,10 @@ func TestSSHIntegrationListHandoffAndCache(t *testing.T) {
 func TestSSHIntegrationBridgeMetadataNoLeak(t *testing.T) {
 	deps, s, runner, configPath := sshIntegrationDeps(t, false)
 	build := func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil }
-	s.On("ListCmd", "tmux", "list-panes", "-s", "-F", mock.Anything).Return([]string{
-		"0::remote::0::::ssh::/bridge::%1::$1::@1",
-		"0::user::0::::zsh::/user::%2::$2::@2",
-	}, nil).Once()
+	s.On("CmdCaptureRaw", mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-panes", "-s", "-F", mock.Anything).Return(rawInventoryResult(strings.Join([]string{
+		`P1::0::"remote"::0::""::"ssh"::"/bridge"::%1::$1::@1::"101:1700000000:/tmp/tmux-fixture"`,
+		`P1::0::"user"::0::""::"zsh"::"/user"::%2::$2::@2::"101:1700000000:/tmp/tmux-fixture"`,
+	}, "\n")), nil).Once()
 	for _, tt := range []struct {
 		name string
 		args []string

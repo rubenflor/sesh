@@ -17,6 +17,16 @@ import (
 )
 
 func TestRunContextBoundsInheritedPipeCleanup(t *testing.T) {
+	testInheritedPipeCleanup(t, NewExec().RunContext)
+}
+
+func TestBoundedCaptureBoundsInheritedPipeCleanup(t *testing.T) {
+	testInheritedPipeCleanup(t, func(ctx context.Context, name string, args ...string) (CommandResult, error) {
+		return RunContextBounded(ctx, name, 1024, 1024, args...)
+	})
+}
+
+func testInheritedPipeCleanup(t *testing.T, run func(context.Context, string, ...string) (CommandResult, error)) {
 	for _, mode := range []string{"cancel", "deadline", "exit"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
@@ -42,7 +52,7 @@ func TestRunContextBoundsInheritedPipeCleanup(t *testing.T) {
 				helperMode = "exit"
 			}
 			go func() {
-				result, err := NewExec().RunContext(ctx, os.Args[0], "-test.run=^TestPipeTreeHelper$", "--", helperMode, dir)
+				result, err := run(ctx, os.Args[0], "-test.run=^TestPipeTreeHelper$", "--", helperMode, dir)
 				done <- runResult{result, err}
 			}()
 			waitForHelper(t, filepath.Join(dir, "parent"), done)

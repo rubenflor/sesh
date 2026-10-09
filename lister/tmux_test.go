@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/home"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/oswrap"
@@ -19,14 +21,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func rawInventoryResult(output string) execwrap.CommandResult {
+	return execwrap.CommandResult{Stdout: []byte(output)}
+}
+
 func TestAttachedSessionPreservesInventoryIdentityAfterRename(t *testing.T) {
 	const generation = "101:1700000000:/tmp/tmux-fixture"
 	const identityFormat = "#{session_id}::#{pid}:#{start_time}:#{socket_path}"
 	s := shell.NewMockShell(t)
-	inventory := s.EXPECT().ListCmd("custom-tmux", "list-sessions", "-F", mock.Anything).Return([]string{
-		"200::::1::::100::0::::0::::::0::0::0::$1::200::0::0::a::/path/A::::3::" + generation,
-		"100::::1::::100::0::::0::::::0::0::0::$2::100::0::0::b::/path/B::::1::" + generation,
-	}, nil).Once()
+	inventory := s.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", 16<<20, 64<<10, "-u", "list-sessions", "-F", mock.Anything).Return(rawInventoryResult(strings.Join([]string{
+		`S1::200::""::1::""::100::0::""::0::""::""::0::0::0::$1::200::0::0::"a"::"/path/A"::""::3::"` + generation + `"`,
+		`S1::100::""::1::""::100::0::""::0::""::""::0::0::0::$2::100::0::0::"b"::"/path/B"::""::1::"` + generation + `"`,
+	}, "\n")), nil).Once()
 	s.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$1", "--", model.SSHBridgeIdentityEnv).Return("", nil).Twice()
 	s.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$2", "--", model.SSHBridgeIdentityEnv).Return("", nil).Once()
 	// After inventory, $2 is renamed away and current $1 is renamed to b.

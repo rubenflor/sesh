@@ -53,7 +53,7 @@ func TestBridgeIdentityUsesOnlyOwningSessionEnvironment(t *testing.T) {
 	newTmux := func(target string) tmux.Tmux {
 		t.Helper()
 		wrapper := filepath.Join(t.TempDir(), "tmux")
-		script := "#!/bin/sh\nif [ \"$1\" = list-panes ]; then\n  exec " + shell.Quote(binary) + " -S " + shell.Quote(socket) + " -f /dev/null \"$@\" -t " + shell.Quote(target) + "\nfi\nexec " + shell.Quote(binary) + " -S " + shell.Quote(socket) + " -f /dev/null \"$@\"\n"
+		script := "#!/bin/sh\nif [ \"$1\" = -u ] && [ \"$2\" = list-panes ]; then\n  exec " + shell.Quote(binary) + " -S " + shell.Quote(socket) + " -f /dev/null \"$@\" -t " + shell.Quote(target) + "\nfi\nexec " + shell.Quote(binary) + " -S " + shell.Quote(socket) + " -f /dev/null \"$@\"\n"
 		require.NoError(t, os.WriteFile(wrapper, []byte(script), 0700))
 		return tmux.NewTmux(nil, shell.NewShell(execwrap.NewExec(), nil), wrapper)
 	}

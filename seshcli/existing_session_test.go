@@ -2,10 +2,13 @@ package seshcli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/github"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
@@ -19,6 +22,10 @@ import (
 )
 
 const existingGeneration = "101:1700000000:/tmp/tmux-fixture"
+
+func rawInventoryResult(output string) execwrap.CommandResult {
+	return execwrap.CommandResult{Stdout: []byte(output)}
+}
 
 func TestEnrichKeepsCapturedSessionAndMetadata(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
@@ -134,7 +141,7 @@ func TestWatchedTmuxPreviewRetainsFirstSelection(t *testing.T) {
 			require.NoError(t, os.WriteFile(config, []byte("cache = false\n"), 0600))
 			s := shell.NewMockShell(t)
 			reads, captures := 0, 0
-			s.EXPECT().ListCmd("tmux", "list-sessions", "-F", mock.Anything).RunAndReturn(func(string, ...string) ([]string, error) {
+			s.EXPECT().CmdCaptureRaw(mock.Anything, "tmux", 16<<20, 64<<10, "-u", "list-sessions", "-F", mock.Anything).RunAndReturn(func(context.Context, string, int, int, ...string) (execwrap.CommandResult, error) {
 				reads++
 				name, replacementName, id, generation := "$0", "other", "$1", existingGeneration
 				if reads > 1 {
@@ -148,10 +155,10 @@ func TestWatchedTmuxPreviewRetainsFirstSelection(t *testing.T) {
 						generation = "102:1700000001:/tmp/tmux-fixture"
 					}
 				}
-				return []string{
-					"200::::0::::100::0::::0::::::0::0::0::" + id + "::200::0::0::" + name + "::/original::::1::" + generation,
-					"100::::0::::100::0::::0::::::0::0::0::$2::100::0::0::" + replacementName + "::/replacement::::1::" + generation,
-				}, nil
+				return rawInventoryResult(strings.Join([]string{
+					sessionInventoryRow([]string{"200", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", id, "200", "0", "0", name, "/original", "", "1", generation}),
+					sessionInventoryRow([]string{"100", "", "0", "", "100", "0", "", "0", "", "", "0", "0", "0", "$2", "100", "0", "0", replacementName, "/replacement", "", "1", generation}),
+				}, "\n")), nil
 			})
 			s.EXPECT().CmdCapture("tmux", "show-environment", "-t", mock.Anything, "--", model.SSHBridgeIdentityEnv).RunAndReturn(func(string, ...string) (string, error) {
 				if captures == 2 && stop == "marked" {

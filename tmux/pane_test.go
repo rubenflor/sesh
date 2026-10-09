@@ -2,26 +2,36 @@ package tmux
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/shell"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+const testPaneInventoryFormat = `P1::#{window_index}::"#{q:window_name}"::#{pane_index}::"#{q:pane_title}"::"#{q:pane_current_command}"::"#{q:pane_current_path}"::#{pane_id}::#{session_id}::#{window_id}::"#{pid}:#{start_time}:#{q:socket_path}"`
+
+func paneInventoryRow(fields []string) string {
+	return inventoryRow(paneInventorySchema, fields)
+}
+
+func paneInventoryFields() []string {
+	return []string{"0", "code", "1", "editor", "vim", "/original", "%7", "$1", "@3", "101:1700000000:/tmp/tmux-fixture"}
+}
 
 func TestListTmuxPanesPreservesOwningSessionMetadata(t *testing.T) {
 	const generation = "101:1700000000:/tmp/tmux-fixture"
 	mockShell := shell.NewMockShell(t)
-	mockShell.EXPECT().ListCmd("custom-tmux", "list-panes", "-s", "-F",
-		"#{window_index}::#{window_name}::#{pane_index}::#{pane_title}::#{pane_current_command}::#{pane_current_path}::#{pane_id}::#{session_id}::#{window_id}::"+serverGenerationFormat).Return(
-		[]string{
-			"0::editor::1::local editor::vim::/p/repo::%1::$1::@1::" + generation,
-			"0::remote::0::bridge::ssh::/p/bridge::%2::$2::@2::" + generation,
-			"0::editor::2::local shell::zsh::/p/repo::%3::$1::@1::" + generation,
-			"0::remote::1::bridge shell::ssh::/p/bridge::%4::$2::@2::" + generation,
-			"malformed",
-		}, nil).Once()
+	mockShell.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-panes", "-s", "-F", testPaneInventoryFormat).Return(
+		rawInventoryResult(strings.Join([]string{
+			paneInventoryRow(strings.Split("0::editor::1::local editor::vim::/p/repo::%1::$1::@1::"+generation, "::")),
+			paneInventoryRow(strings.Split("0::remote::0::bridge::ssh::/p/bridge::%2::$2::@2::"+generation, "::")),
+			paneInventoryRow(strings.Split("0::editor::2::local shell::zsh::/p/repo::%3::$1::@1::"+generation, "::")),
+			paneInventoryRow(strings.Split("0::remote::1::bridge shell::ssh::/p/bridge::%4::$2::@2::"+generation, "::")),
+		}, "\n")), nil).Once()
 	mockShell.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$1", "--", "SESH_SSH_IDENTITY").Return("-SESH_SSH_IDENTITY", nil).Once()
 	mockShell.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$2", "--", "SESH_SSH_IDENTITY").Return("SESH_SSH_IDENTITY=ssh/host/work", nil).Once()
 
@@ -39,9 +49,8 @@ func TestListTmuxPanesPreservesOwningSessionMetadata(t *testing.T) {
 func TestListTmuxPanesPropagatesBridgeMarkerFailure(t *testing.T) {
 	mockShell := shell.NewMockShell(t)
 	wantErr := errors.New("session environment unavailable")
-	mockShell.EXPECT().ListCmd("custom-tmux", "list-panes", "-s", "-F",
-		"#{window_index}::#{window_name}::#{pane_index}::#{pane_title}::#{pane_current_command}::#{pane_current_path}::#{pane_id}::#{session_id}::#{window_id}::"+serverGenerationFormat).Return(
-		[]string{"0::editor::1::local editor::vim::/p/repo::%1::$1::@1"}, nil).Once()
+	mockShell.EXPECT().CmdCaptureRaw(mock.Anything, "custom-tmux", maxInventoryBytes, maxInventoryStderr, "-u", "list-panes", "-s", "-F", testPaneInventoryFormat).Return(
+		rawInventoryResult(paneInventoryRow(strings.Split("0::editor::1::local editor::vim::/p/repo::%1::$1::@1::101:1700000000:/tmp/tmux-fixture", "::"))), nil).Once()
 	mockShell.EXPECT().CmdCapture("custom-tmux", "show-environment", "-t", "$1", "--", "SESH_SSH_IDENTITY").Return("", wantErr).Once()
 
 	panes, err := NewTmux(nil, mockShell, "custom-tmux").ListTmuxPanes()
@@ -104,23 +113,21 @@ func TestSelectPaneRejectsUnverifiedGeneration(t *testing.T) {
 }
 
 func TestParseTmuxPanesScopesIdentityToGeneration(t *testing.T) {
-	const row = "0::code::1::editor::vim::/original::%7::$1::@3"
 	for _, generation := range []string{"", "unknown", "101:0:/tmp/tmux-fixture", "101:1700000000:/tmp/socket::suffix"} {
 		t.Run(generation, func(t *testing.T) {
-			input := row
-			if generation != "" {
-				input += "::" + generation
-			}
-			panes, err := parseTmuxPanesOutput([]string{input})
-			require.NoError(t, err)
-			require.Len(t, panes, 1)
-			require.Equal(t, "$1", panes[0].SessionID)
-			require.Equal(t, "@3", panes[0].WindowID)
-			require.Equal(t, "%7", panes[0].PaneID)
+			fields := paneInventoryFields()
+			fields[9] = generation
+			panes, err := parseTmuxPanesOutput(paneInventoryRow(fields))
 			if generation == "101:1700000000:/tmp/socket::suffix" {
+				require.NoError(t, err)
+				require.Len(t, panes, 1)
+				require.Equal(t, "$1", panes[0].SessionID)
+				require.Equal(t, "@3", panes[0].WindowID)
+				require.Equal(t, "%7", panes[0].PaneID)
 				require.Equal(t, generation, panes[0].ServerGeneration)
 			} else {
-				require.Empty(t, panes[0].ServerGeneration, "legacy/unsupported metadata cannot authorize ID reuse")
+				require.Error(t, err)
+				require.Nil(t, panes)
 			}
 		})
 	}

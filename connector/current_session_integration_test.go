@@ -3,12 +3,14 @@
 package connector
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/git"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
@@ -27,25 +29,6 @@ type currentSessionPrivateShell struct {
 	currentObserved                              bool
 }
 
-func (s *currentSessionPrivateShell) ListCmd(bin string, args ...string) ([]string, error) {
-	lines, err := s.panePrivateShell.ListCmd(bin, args...)
-	if err == nil && args[0] == "list-sessions" {
-		for i, line := range lines {
-			fields := strings.SplitN(line, "::", 22)
-			if len(fields) == 22 && (fields[13] == "$1" || fields[13] == "$2") {
-				fields[2] = "1" // Two attached clients; the caller is always $1.
-				lines[i] = strings.Join(fields, "::")
-			}
-		}
-		if s.afterInventory != nil {
-			after := s.afterInventory
-			s.afterInventory = nil
-			after()
-		}
-	}
-	return lines, err
-}
-
 func (s *currentSessionPrivateShell) Cmd(bin string, args ...string) (string, error) {
 	out, err := s.panePrivateShell.Cmd(bin, args...)
 	if args[0] == "display-message" && len(args) == 3 {
@@ -61,12 +44,28 @@ func (s *currentSessionPrivateShell) Cmd(bin string, args ...string) (string, er
 
 func (s *currentSessionPrivateShell) CmdCapture(bin string, args ...string) (string, error) {
 	out, err := s.panePrivateShell.CmdCapture(bin, args...)
-	if err == nil && s.currentObserved && s.afterOwnership != nil {
+	if err == nil && args[0] == "show-environment" && s.currentObserved && s.afterOwnership != nil {
 		after := s.afterOwnership
 		s.afterOwnership = nil
 		after()
 	}
 	return out, err
+}
+
+func (s *currentSessionPrivateShell) CmdCaptureRaw(ctx context.Context, bin string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	inventory := args[0] == "-u" && args[1] == "list-sessions"
+	if inventory {
+		args = append([]string(nil), args...)
+		// Inject attached-client state in the native expansion, before encoding.
+		args[3] = strings.ReplaceAll(args[3], "#{session_attached}", "#{?#{==:#{session_id},$0},#{session_attached},1}")
+	}
+	result, err := s.panePrivateShell.CmdCaptureRaw(ctx, bin, stdoutLimit, stderrLimit, args...)
+	if err == nil && inventory && s.afterInventory != nil {
+		after := s.afterInventory
+		s.afterInventory = nil
+		after()
+	}
+	return result, err
 }
 
 func TestCurrentSessionIdentityOnPrivateTmux(t *testing.T) {

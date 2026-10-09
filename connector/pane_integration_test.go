@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joshmedeski/sesh/v2/execwrap"
 	"github.com/joshmedeski/sesh/v2/lister"
 	"github.com/joshmedeski/sesh/v2/model"
 	"github.com/joshmedeski/sesh/v2/oswrap"
@@ -59,13 +60,23 @@ func (s *panePrivateShell) Cmd(_ string, args ...string) (string, error) {
 }
 
 func (s *panePrivateShell) CmdCapture(_ string, args ...string) (string, error) {
+	if args[0] == "-u" && args[1] == "list-panes" {
+		args = append(args, "-t", s.sessionID)
+	}
 	return s.run(args...)
 }
 
-func (s *panePrivateShell) ListCmd(_ string, args ...string) ([]string, error) {
-	if args[0] == "list-panes" {
+func (s *panePrivateShell) CmdCaptureRaw(ctx context.Context, _ string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if args[0] == "-u" && args[1] == "list-panes" {
 		args = append(args, "-t", s.sessionID)
 	}
+	command := []string{"-u", "TMUX", "-u", "TMUX_PANE", "-u", "SESH_CLIENT", "-u", model.SSHBridgeIdentityEnv, "SHELL=/bin/sh", s.binary, "-S", s.socket, "-f", "/dev/null"}
+	return shell.NewShell(execwrap.NewExec(), nil).CmdCaptureRaw(ctx, "/usr/bin/env", stdoutLimit, stderrLimit, append(command, args...)...)
+}
+
+func (s *panePrivateShell) ListCmd(_ string, args ...string) ([]string, error) {
 	out, err := s.run(args...)
 	return strings.Split(out, "\n"), err
 }

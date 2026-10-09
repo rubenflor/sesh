@@ -1,8 +1,10 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/joshmedeski/sesh/v2/convert"
@@ -10,9 +12,9 @@ import (
 )
 
 func (t *RealTmux) ListSessions() ([]*model.TmuxSession, error) {
-	output, err := t.shell.ListCmd(t.bin, "list-sessions", "-F", listsessionsformat())
+	output, err := t.captureInventory("-u", "list-sessions", "-F", listsessionsformat())
 	if err != nil {
-		return []*model.TmuxSession{}, nil
+		return nil, err
 	}
 	sessions, err := parseTmuxSessionsOutput(output)
 	if err != nil {
@@ -31,18 +33,19 @@ func (t *RealTmux) ListSessions() ([]*model.TmuxSession, error) {
 
 var separator = "::"
 
-func listsessionsformat() string {
-	variables := []string{
+var sessionInventorySchema = inventorySchema{
+	tag: "S1",
+	fields: []string{
 		"#{session_activity}",
-		"#{session_alerts}",
+		`"#{q:session_alerts}"`,
 		"#{session_attached}",
-		"#{session_attached_list}",
+		`"#{q:session_attached_list}"`,
 		"#{session_created}",
 		"#{session_format}",
-		"#{session_group}",
+		`"#{q:session_group}"`,
 		"#{session_group_attached}",
-		"#{session_group_attached_list}",
-		"#{session_group_list}",
+		`"#{q:session_group_attached_list}"`,
+		`"#{q:session_group_list}"`,
 		"#{session_group_many_attached}",
 		"#{session_group_size}",
 		"#{session_grouped}",
@@ -50,22 +53,49 @@ func listsessionsformat() string {
 		"#{session_last_attached}",
 		"#{session_many_attached}",
 		"#{session_marked}",
-		"#{session_name}",
-		"#{session_path}",
-		"#{session_stack}",
+		`"#{q:session_name}"`,
+		`"#{q:session_path}"`,
+		`"#{q:session_stack}"`,
 		"#{session_windows}",
-		serverGenerationFormat,
-	}
-	return strings.Join(variables, separator)
+		inventoryGenerationFormat,
+	},
 }
 
-func parseTmuxSessionsOutput(rawList []string) ([]*model.TmuxSession, error) {
-	sessions := make([]*model.TmuxSession, 0, len(rawList))
-	for _, line := range rawList {
-		fields := strings.SplitN(line, separator, 22)
+func listsessionsformat() string {
+	return sessionInventorySchema.format()
+}
 
-		if len(fields) != 21 && len(fields) != 22 {
-			continue
+func parseTmuxSessionsOutput(output string) ([]*model.TmuxSession, error) {
+	records, err := sessionInventorySchema.decode(output)
+	if err != nil {
+		return nil, err
+	}
+	sessions := make([]*model.TmuxSession, 0, len(records))
+	for _, fields := range records {
+		if !validTmuxID(fields[13], "$") {
+			return nil, errors.New("unverified tmux session inventory identity")
+		}
+		for _, i := range []int{0, 2, 4, 7, 11, 14, 20} {
+			if fields[i] == "" {
+				continue
+			}
+			number, err := strconv.ParseInt(fields[i], 10, 64)
+			if err != nil || number < 0 || strconv.FormatInt(number, 10) != fields[i] {
+				return nil, errors.New("malformed tmux session inventory number")
+			}
+			if i == 2 || i == 7 || i == 11 || i == 20 {
+				if _, err := strconv.Atoi(fields[i]); err != nil {
+					return nil, errors.New("malformed tmux session inventory number")
+				}
+			}
+		}
+		for _, i := range []int{5, 10, 12, 15, 16} {
+			if fields[i] != "" && fields[i] != "0" && fields[i] != "1" {
+				return nil, errors.New("malformed tmux session inventory flag")
+			}
+		}
+		if !validServerGeneration(fields[21]) {
+			return nil, errors.New("unverified tmux session inventory generation")
 		}
 
 		session := &model.TmuxSession{
@@ -83,6 +113,7 @@ func parseTmuxSessionsOutput(rawList []string) ([]*model.TmuxSession, error) {
 			GroupSize:         convert.StringToInt(fields[11]),
 			Grouped:           convert.StringToBool(fields[12]),
 			ID:                fields[13],
+			ServerGeneration:  fields[21],
 			LastAttached:      convert.StringToTime(fields[14]),
 			ManyAttached:      convert.StringToBool(fields[15]),
 			Marked:            convert.StringToBool(fields[16]),
@@ -90,11 +121,6 @@ func parseTmuxSessionsOutput(rawList []string) ([]*model.TmuxSession, error) {
 			Path:              fields[18],
 			Stack:             convert.StringToIntSlice(fields[19]),
 			Windows:           convert.StringToInt(fields[20]),
-		}
-		// Read the ID and server lifetime in one tmux response. Missing or
-		// unsupported metadata remains unknown, so destructive operations fail.
-		if len(fields) == 22 && validServerGeneration(fields[21]) {
-			session.ServerGeneration = fields[21]
 		}
 		sessions = append(sessions, session)
 	}

@@ -29,6 +29,12 @@ import (
 // runner's deadline. Unlike panePrivateShell, this must not override its socket.
 type configuredWindowShell struct{ shell.Shell }
 
+func (s *configuredWindowShell) CmdCaptureRaw(ctx context.Context, bin string, stdoutLimit, stderrLimit int, args ...string) (execwrap.CommandResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return shell.NewShell(execwrap.NewExec(), nil).CmdCaptureRaw(ctx, bin, stdoutLimit, stderrLimit, args...)
+}
+
 func (s *configuredWindowShell) CmdCapture(bin string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
