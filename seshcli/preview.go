@@ -78,11 +78,17 @@ func NewPreviewCommand(base *BaseDeps) *cobra.Command {
 			}
 
 			name := args[0]
+			preview := deps.Previewer.Preview
+			if contextual, ok := deps.Previewer.(previewer.ContextPreviewer); ok {
+				preview = func(name string) (string, error) {
+					return contextual.PreviewContext(cmd.Context(), name)
+				}
+			}
 			watch, _ := cmd.Flags().GetBool("watch")
 			interval, _ := cmd.Flags().GetDuration("interval")
 
 			if !watch {
-				return writePreview(cmd.OutOrStdout(), deps.Previewer.Preview, name)
+				return writePreview(cmd.OutOrStdout(), preview, name)
 			}
 			if interval <= 0 {
 				return errors.New("preview interval must be greater than zero")
@@ -90,16 +96,16 @@ func NewPreviewCommand(base *BaseDeps) *cobra.Command {
 
 			session, sessionExists := deps.Lister.FindTmuxSession(deps.Icon.RemoveIcon(name))
 			if !sessionExists {
-				return writePreview(cmd.OutOrStdout(), deps.Previewer.Preview, name)
+				return writePreview(cmd.OutOrStdout(), preview, name)
 			}
 
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 
-			preview := func(string) (string, error) {
+			watchPreviewFunc := func(string) (string, error) {
 				return previewer.PreviewTmuxSession(deps.Tmux, session)
 			}
-			return watchPreview(cmd.Context(), cmd.OutOrStdout(), preview, name, ticker.C)
+			return watchPreview(cmd.Context(), cmd.OutOrStdout(), watchPreviewFunc, name, ticker.C)
 		},
 	}
 

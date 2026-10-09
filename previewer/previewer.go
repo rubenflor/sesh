@@ -1,6 +1,8 @@
 package previewer
 
 import (
+	"context"
+
 	"github.com/joshmedeski/sesh/v2/dir"
 	"github.com/joshmedeski/sesh/v2/home"
 	"github.com/joshmedeski/sesh/v2/icon"
@@ -14,6 +16,10 @@ import (
 type Previewer interface {
 	// Previews a session or directory
 	Preview(name string) (string, error)
+}
+
+type ContextPreviewer interface {
+	PreviewContext(context.Context, string) (string, error)
 }
 
 type RealPreviewer struct {
@@ -32,6 +38,7 @@ func NewPreviewer(
 	shell shell.Shell,
 ) Previewer {
 	strategies := []PreviewStrategy{
+		NewSSHStrategy(config, shell),
 		NewTmuxStrategy(lister, tmux),
 		NewConfigStrategy(lister, shell),
 		NewDefaultConfigStrategy(lister, config, ls),
@@ -45,12 +52,32 @@ func NewPreviewer(
 }
 
 func (p *RealPreviewer) Preview(name string) (string, error) {
+	return p.PreviewContext(context.Background(), name)
+}
+
+func (p *RealPreviewer) PreviewContext(ctx context.Context, name string) (string, error) {
 	trimmedName := p.icon.RemoveIcon(name)
 
 	for _, strategy := range p.strategies {
-		output, err := strategy.Execute(trimmedName)
+		exclusive, isExclusive := strategy.(ExclusivePreviewStrategy)
+		if isExclusive && !exclusive.Handles(trimmedName) {
+			continue
+		}
+
+		var (
+			output string
+			err    error
+		)
+		if contextual, ok := strategy.(ContextPreviewStrategy); ok {
+			output, err = contextual.ExecuteContext(ctx, trimmedName)
+		} else {
+			output, err = strategy.Execute(trimmedName)
+		}
 		if err != nil {
 			return "", err
+		}
+		if isExclusive {
+			return output, nil
 		}
 		if output != "" {
 			return output, nil

@@ -64,8 +64,19 @@ func (i *RealIcon) AddIconNoColor(s model.SeshSession) string {
 }
 
 func (i *RealIcon) RemoveIcon(name string) string {
-	if strings.HasPrefix(name, tmuxIcon) || strings.HasPrefix(name, zoxideIcon) || strings.HasPrefix(name, configIcon) || strings.HasPrefix(name, tmuxinatorIcon) || strings.HasPrefix(name, tmuxPaneIcon) {
-		return name[4:]
+	known := []Glyph{
+		{Icon: tmuxIcon, ColorCode: ansi.Blue},
+		{Icon: zoxideIcon, ColorCode: ansi.Cyan},
+		{Icon: configIcon, ColorCode: ansi.BrightBlack},
+		{Icon: tmuxinatorIcon, ColorCode: ansi.Yellow},
+		{Icon: tmuxPaneIcon, ColorCode: ansi.Green},
+	}
+	for _, glyph := range known {
+		for _, prefix := range []string{glyph.Icon + " ", ansiString(glyph.ColorCode, glyph.Icon) + " "} {
+			if strings.HasPrefix(name, prefix) {
+				return strings.TrimPrefix(name, prefix)
+			}
+		}
 	}
 	return name
 }

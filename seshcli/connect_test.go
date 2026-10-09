@@ -55,6 +55,17 @@ func TestConnectRootPreservesLocalPathResolution(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 }
 
+func TestConnectPreservesLiteralLightningPrefixedName(t *testing.T) {
+	base := BaseDeps{}
+	mConnector := connector.NewMockConnector(t)
+	mConnector.EXPECT().Connect("⚡ foo", model.ConnectOpts{}).Return("connected", nil).Once()
+	deps := &Deps{BaseDeps: base, Connector: mConnector, Icon: icon.NewIcon(model.Config{})}
+	cmd := newConnectCommand(&base, func(*cobra.Command, *BaseDeps) (*Deps, error) { return deps, nil })
+	cmd.SetArgs([]string{"⚡ foo"})
+
+	require.NoError(t, cmd.Execute())
+}
+
 func TestConnectRootRejectsSSHBeforePathResolution(t *testing.T) {
 	for _, tt := range []struct{ target, wantError string }{
 		{" ssh/host/work%2F1", "--root is not supported for SSH sessions"},
