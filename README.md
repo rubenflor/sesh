@@ -364,6 +364,31 @@ bind-key "T" run-shell "sesh connect \"$(
 
 You can customize this however you want, see `man fzf` for more info on the different options.
 
+The same `fzf-tmux` pattern previews configured remote tmux sessions. Add the
+OpenSSH aliases to `sesh.toml` first:
+
+```toml
+[ssh]
+hosts = ["dev", "staging"]
+```
+
+Run this remote-only selection-and-connect command from a tmux session:
+
+```sh
+sesh connect "$(
+  sesh list --ssh --icons | fzf-tmux -p 80%,70% \
+    --ansi \
+    --preview-window 'right:55%' \
+    --preview 'sesh preview {}'
+)"
+```
+
+The preview command takes one snapshot and accepts the canonical
+`ssh/<host>/<session>` identity emitted by `sesh list`. Pressing <kbd>Enter</kbd>
+connects to the selected session. Pressing <kbd>Esc</kbd> cancels the selection;
+detaching the tmux client closes the popup without connecting. SSH previews
+are non-interactive and have a five-second timeout; they do not refresh live.
+
 To continuously refresh previews of active tmux sessions, add `--watch` to the preview command:
 
 ```sh
@@ -688,6 +713,7 @@ sesh list --ssh              # remote sessions only
 sesh picker --ssh            # picker restricted to remote sessions
 sesh list --tmux --ssh       # combine local tmux and remote sessions
 sesh list --ssh --json       # remote sessions using the existing JSON shape
+sesh preview ssh/dev/work    # one-shot remote pane preview
 sesh connect ssh/dev/work    # attach to the existing remote session "work"
 ```
 
