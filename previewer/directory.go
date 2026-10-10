@@ -18,6 +18,10 @@ func NewDirectoryStrategy(home home.Home, dir dir.Dir, ls ls.Ls) *DirectoryPrevi
 
 func (s *DirectoryPreviewStrategy) Execute(name string) (string, error) {
 	path, _ := s.home.ExpandPath(name)
+	return s.executePath(path)
+}
+
+func (s *DirectoryPreviewStrategy) executePath(path string) (string, error) {
 	isDir, absPath := s.dir.Dir(path)
 
 	if isDir {

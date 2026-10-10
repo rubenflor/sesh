@@ -168,6 +168,18 @@
       "type": "object",
       "description": "Settings for the Sesh Picker TUI",
       "properties": {
+        "input_position": {
+          "type": "string",
+          "description": "Position of the native session picker's search input",
+          "enum": ["top", "bottom"],
+          "default": "top"
+        },
+        "keymap": {
+          "type": "string",
+          "description": "Native session picker keybindings",
+          "enum": ["default", "fzf"],
+          "default": "default"
+        },
         "show_icons": {
           "type": "boolean",
           "description": "Show icons in the picker TUI"

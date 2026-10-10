@@ -2,6 +2,7 @@ package connector
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/joshmedeski/sesh/v2/model"
@@ -42,8 +43,22 @@ func (c *RealConnector) Resolve(name string) (model.Connection, error) {
 }
 
 // ConnectSession consumes picker rows without resolving a local display name.
-// Other sources retain their existing name-based connection behavior.
+// Discovered directories retain their literal path; other sources stay name-based.
 func (c *RealConnector) ConnectSession(session model.SeshSession, opts model.ConnectOpts) (string, error) {
+	if session.Src == "dir" && session.Path != "" {
+		if !filepath.IsAbs(session.Path) {
+			return "", fmt.Errorf("selected directory has no absolute path")
+		}
+		connection, err := directoryConnection(c, session.Path)
+		if err != nil {
+			return "", err
+		}
+		if !connection.Found {
+			return "", fmt.Errorf("directory not found: %s", session.Path)
+		}
+		c.zoxide.Add(connection.Session.Path)
+		return connectToTmux(c, connection, opts)
+	}
 	if session.Src == "tmux-pane" {
 		return connectToTmuxPane(c, model.Connection{Session: session}, opts)
 	}

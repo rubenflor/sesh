@@ -167,9 +167,11 @@ type (
 	}
 
 	TUIConfig struct {
-		// TODO: keybindings and more
 		ShowIcons   bool `toml:"show_icons"`
 		ShowWindows bool `toml:"show_windows"`
+		// InputPosition and Keymap apply only to the native session picker.
+		InputPosition string `toml:"input_position"`
+		Keymap        string `toml:"keymap"`
 		// WindowNameFormat is the tmux format rendered for each window when
 		// ShowWindows is enabled. Empty means DefaultWindowNameFormat.
 		WindowNameFormat string `toml:"window_name_format"`

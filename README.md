@@ -966,6 +966,8 @@ The Picker TUI can be configured with some options that help you customize it's 
 
 ```toml
 [tui]
+input_position = "top"
+keymap = "default"
 prompt = "> "
 placeholder = "Filter sessions... "
 show_icons = false
@@ -979,6 +981,40 @@ preview_width = 60
 preview_min_width = 100
 preview_border = "line"
 ```
+
+#### fzf-style session picker
+
+Opt in to a bottom search input and fzf-style shortcuts independently. The defaults remain a top input and the existing native keymap; these options do not change the worktree picker.
+
+```toml
+[tui]
+input_position = "bottom"
+keymap = "fzf"
+preview = true
+```
+
+Run `sesh picker -i` to show the session list on the left, the preview on the right, and the source/status hint above the focused input at the bottom. Narrow terminals hide the preview as usual.
+
+| Key | Action with `keymap = "fzf"` |
+| --- | --- |
+| Ctrl-A | All loaded sources, including SSH |
+| Ctrl-T | Local tmux sessions |
+| Ctrl-G | Configured sessions |
+| Ctrl-X | Zoxide directories |
+| Ctrl-F | Find directories under your home directory |
+| Ctrl-D | Confirm killing the selected local tmux session |
+| Alt-X | Confirm removing the selected zoxide entry |
+| Ctrl-S | Cycle sources |
+| Ctrl-O | Toggle preview |
+| Tab / Shift-Tab | Next / previous item |
+| PageUp / PageDown | Page through the list |
+| Enter / Esc | Connect / cancel |
+
+Arrow keys and Ctrl-J/K/N/P still navigate. Source shortcuts retain the query and filter the inventory loaded for this invocation; CLI source flags still limit that inventory. SSH rows and internal SSH bridges cannot be killed by Ctrl-D. The default keymap still uses Ctrl-X for removal and Ctrl-D for half-page scrolling.
+
+Ctrl-F requires [`fd`](https://github.com/sharkdp/fd) and runs the equivalent of `fd -H -d 2 -t d -E .Trash . ~` asynchronously. Sesh requests absolute, NUL-delimited paths, discovers hidden directories up to depth 2 (respecting fd's normal ignore rules), and excludes `.Trash`. Switching sources or closing the picker cancels discovery and restores the normal session inventory. A missing `fd`, command failure, or the 4 MiB output limit produces a nonfatal status message. Listing paths does not update zoxide; Enter connects using the selected literal directory path and the existing directory connection rules.
+
+SSH ordering, friendly labels, canonical connection identities and one-shot preview caching are unchanged. In very small bottom layouts, confirmation becomes compact; if there is not enough room to show the choices, resize or press Esc before confirming.
 
 With `show_windows = true`, each row also lists the names of the windows inside that session, dimmed after the session name. Window names that don't fit are summarized as `+N`:
 

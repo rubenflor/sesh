@@ -9,6 +9,10 @@ func dirStrategy(c *RealConnector, name string) (model.Connection, error) {
 	if err != nil {
 		return model.Connection{}, err
 	}
+	return directoryConnection(c, path)
+}
+
+func directoryConnection(c *RealConnector, path string) (model.Connection, error) {
 	isDir, absPath := c.dir.Dir(path)
 	if !isDir {
 		return model.Connection{Found: false}, nil
@@ -30,8 +34,6 @@ func dirStrategy(c *RealConnector, name string) (model.Connection, error) {
 		New:         true,
 		AddToZoxide: true,
 		Session: model.SeshSession{
-			// TODO: what is the best name for this? "dir" isn't technically a source
-			// it's not used in any list command
 			Src:  "dir",
 			Name: nameFromPath,
 			Path: absPath,

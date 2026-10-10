@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -227,6 +228,13 @@ func (p *RealPicker) previewSession(ctx context.Context, session model.SeshSessi
 	if session.Src == "tmux" {
 		return previewer.PreviewTmuxSession(p.tmux, session)
 	}
+	if session.Src == "dir" && session.Path != "" {
+		literal, ok := p.previewer.(previewer.LiteralDirectoryPreviewer)
+		if !ok {
+			return "", errors.New("literal directory preview is unavailable")
+		}
+		return literal.PreviewDirectory(session.Path)
+	}
 	return p.previewer.Preview(session.Name)
 }
 
@@ -298,7 +306,20 @@ func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (model.SeshSe
 		previewCtx = context.Background()
 	}
 	previewCtx, cancelPreviews := context.WithCancel(previewCtx)
-	defer cancelPreviews()
+	var findMu sync.Mutex
+	defer func() {
+		cancelPreviews()
+		findMu.Lock()
+		findMu.Unlock()
+	}()
+	var findDirectories DirectoryFetchFunc
+	if p.shell != nil && p.home != nil {
+		findDirectories = func(ctx context.Context) (model.SeshSessions, error) {
+			findMu.Lock()
+			defer findMu.Unlock()
+			return p.findDirectories(ctx)
+		}
+	}
 
 	m := New(fetchFunc, Options{
 		Context:                 previewCtx,
@@ -307,6 +328,9 @@ func (p *RealPicker) Pick(fetchFunc FetchFunc, opts PickerOptions) (model.SeshSe
 		SeparatorAware:          p.config.SeparatorAware,
 		Prompt:                  prompt,
 		Placeholder:             placeholder,
+		Keymap:                  p.config.TUI.Keymap,
+		InputPosition:           p.config.TUI.InputPosition,
+		FindDirectories:         findDirectories,
 		Query:                   query,
 		Aliases:                 buildAliases(p.config.SessionConfigs),
 		AliasFilterPrefix:       aliasFilterPrefix(p.config.TUI.AliasFilterPrefix),

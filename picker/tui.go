@@ -124,13 +124,19 @@ type Alias struct {
 // Options configures the picker model. Zero values are valid and mean
 // "off"/"unset", except Prompt and Placeholder which are passed through as-is.
 type Options struct {
-	// Context owns preview commands; nil uses a standalone background context.
+	// Context owns preview and directory commands; nil uses a background context.
 	Context        context.Context
 	ShowIcons      bool
 	ShowWindows    bool
 	SeparatorAware bool
 	Prompt         string
 	Placeholder    string
+	// Keymap and InputPosition opt in to fzf shortcuts and a bottom input;
+	// empty values keep the existing keymap and top input.
+	Keymap        string
+	InputPosition string
+	// FindDirectories runs fd discovery off the event loop; nil disables it.
+	FindDirectories DirectoryFetchFunc
 	// Query pre-fills the filter input. It goes in as if it had been typed —
 	// the sigils for alias and index mode included — but never triggers alias
 	// auto-connect on its own, which stays a reward for an actual keystroke.
@@ -171,16 +177,23 @@ type Options struct {
 	// contiguous ranges.
 	GroupSeparator bool
 	// Remove drops an entry from the frecency backend, and Kill ends a live
-	// tmux session. Nil leaves ctrl+x inert on the rows it would have owned.
+	// tmux session. Nil leaves removal bindings inert on their owned rows.
 	Remove RemoveFunc
 	Kill   KillFunc
 }
 
 type Model struct {
-	allItems     sessionItems
-	filtered     []filteredItem
-	filterInput  textinput.Model
-	sourceFilter string // empty means every source loaded for this invocation
+	allItems         sessionItems
+	filtered         []filteredItem
+	filterInput      textinput.Model
+	sourceFilter     string // empty means every source loaded for this invocation
+	fzfKeymap        bool
+	bottomInput      bool
+	directoryItems   sessionItems
+	findDirectories  DirectoryFetchFunc
+	directoryLoading bool
+	directoryCancel  context.CancelFunc
+	directorySeq     int
 	// cursor indexes filtered; offset indexes rows, which is the same list with
 	// the group separators laid in, so scrolling counts the lines actually
 	// drawn.
@@ -221,8 +234,8 @@ type Model struct {
 
 	// removeFunc drops an entry from the frecency backend and killFunc ends a
 	// live tmux session; confirm is the dialog guarding both — non-nil only
-	// while it is open, so its presence is the mode. status is a one-line
-	// message under the filter input, cleared by the next keypress.
+	// while it is open, so its presence is the mode. status shares the source
+	// hint line and is cleared by the next keypress.
 	removeFunc RemoveFunc
 	killFunc   KillFunc
 	confirm    *confirmState
@@ -425,6 +438,9 @@ func New(fetchFunc FetchFunc, opts Options) Model {
 
 	m := Model{
 		filterInput:             ti,
+		fzfKeymap:               opts.Keymap == "fzf",
+		bottomInput:             opts.InputPosition == "bottom",
+		findDirectories:         opts.FindDirectories,
 		showIcons:               opts.ShowIcons,
 		showWindows:             opts.ShowWindows,
 		separatorAware:          opts.SeparatorAware,
@@ -471,6 +487,17 @@ const previewDebounce = 60 * time.Millisecond
 // syncInputWidth fits the filter input to the list column. Toggling the preview
 // pane resizes that column, so it is called from there too, not just on resize.
 func (m *Model) syncInputWidth() {
+	if m.bottomInput {
+		width := max(1, m.width-2-lipgloss.Width(m.filterInput.Prompt)-1)
+		if width != m.filterInput.Width() {
+			position := m.filterInput.Position()
+			m.filterInput.SetWidth(width)
+			// Rebuild Bubbles' viewport before restoring the logical cursor.
+			m.filterInput.CursorEnd()
+			m.filterInput.SetCursor(position)
+		}
+		return
+	}
 	m.filterInput.SetWidth(m.contentWidth() - 4)
 }
 
@@ -558,6 +585,19 @@ func (m *Model) fetchPreview(seq int, session model.SeshSession) tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case directoriesLoadedMsg:
+		if msg.seq != m.directorySeq || m.sourceFilter != "dir" {
+			return m, nil
+		}
+		m.cancelDirectories()
+		if msg.err != nil {
+			m.status = msg.err.Error()
+			return m, nil
+		}
+		m.directoryItems = buildItems(msg.sessions, m.separatorAware, m.iconFunc)
+		m.applyFilter()
+		return m, m.schedulePreview()
+
 	case aliasAutoConnectMsg:
 		// The tick can't be cancelled, so a stale one still arrives: ignore it
 		// unless it is the latest and the filter still reads as that alias.
@@ -571,6 +611,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		item, _ := m.aliasMatch(alias.Alias)
 		m.chosen = item.session
 		m.cancelPreview()
+		m.cancelDirectories()
 		return m, tea.Quit
 
 	case previewFetchMsg:
@@ -607,6 +648,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.loadErr = msg.err
 			m.cancelPreview()
+			m.cancelDirectories()
 			return m, tea.Quit
 		}
 		m.loading = false
@@ -632,6 +674,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.syncInputWidth()
+		if m.bottomInput {
+			m.scrollToCursor()
+		}
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -643,10 +688,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A status message answers the previous keypress, so the next one
 		// retires it.
 		m.status = ""
+		if m.fzfKeymap {
+			switch msg.String() {
+			case "ctrl+a":
+				return m.switchSource("")
+			case "ctrl+t":
+				return m.switchSource("tmux")
+			case "ctrl+g":
+				return m.switchSource("config")
+			case "ctrl+x":
+				return m.switchSource("zoxide")
+			case "ctrl+f":
+				return m.startDirectorySearch()
+			case "ctrl+d":
+				return m.startSourceRemoval(tmuxSrc)
+			case "alt+x":
+				return m.startSourceRemoval(zoxideSrc)
+			case "tab":
+				m.cursorDown(1)
+				return m, m.schedulePreview()
+			case "shift+tab":
+				m.cursorUp(1)
+				return m, m.schedulePreview()
+			case "pgup":
+				m.cursorUp(m.visibleCount())
+				return m, m.schedulePreview()
+			case "pgdown":
+				m.cursorDown(m.visibleCount())
+				return m, m.schedulePreview()
+			}
+		}
 
 		switch msg.String() {
 		case "enter":
-			if m.loading {
+			if m.listLoading() {
 				return m, nil
 			}
 			if len(m.filtered) > 0 {
@@ -654,11 +729,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.chosen = selected.item.session
 			}
 			m.cancelPreview()
+			m.cancelDirectories()
 			return m, tea.Quit
 
 		case "esc", "ctrl+c":
 			m.quit = true
 			m.cancelPreview()
+			m.cancelDirectories()
 			return m, tea.Quit
 
 		case "up", "ctrl+k", "ctrl+p":
@@ -681,9 +758,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startRemove()
 
 		case "ctrl+s":
-			if m.loading {
+			if m.loading && m.sourceFilter != "dir" {
 				return m, nil
 			}
+			m.cancelDirectories()
 			m.cycleSource()
 			m.applyFilter()
 			m.cursor, m.offset = 0, 0
@@ -716,6 +794,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.chosen = session
 				m.cancelPreview()
+				m.cancelDirectories()
 				return m, tea.Quit
 			}
 		}
@@ -727,7 +806,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.filterInput, cmd = m.filterInput.Update(msg)
 
 	if m.filterInput.Value() != prevValue {
-		if !m.loading {
+		if !m.listLoading() {
 			m.applyFilter()
 		}
 		m.cursor = 0
@@ -836,7 +915,7 @@ func (m *Model) configItem(name string) sessionItem {
 // if so, returns whatever was typed after the sigil. Only a leading sigil
 // counts, so slashes inside a path-like query are left alone.
 func (m *Model) aliasFilterQuery(raw string) (string, bool) {
-	if m.aliasFilterPrefix == "" || !strings.HasPrefix(raw, m.aliasFilterPrefix) {
+	if m.sourceFilter == "dir" || m.aliasFilterPrefix == "" || !strings.HasPrefix(raw, m.aliasFilterPrefix) {
 		return "", false
 	}
 	return strings.TrimPrefix(raw, m.aliasFilterPrefix), true
@@ -904,6 +983,9 @@ func (m *Model) filterAliases(query string) []filteredItem {
 // first, so configuring it as `#` keeps alias mode and leaves index mode
 // unreachable rather than making the two fight over the same keystroke.
 func (m *Model) indexFilterQuery(raw string) (string, bool) {
+	if m.sourceFilter == "dir" {
+		return "", false
+	}
 	if _, ok := m.aliasFilterQuery(raw); ok {
 		return "", false
 	}
@@ -941,6 +1023,15 @@ func (m *Model) sourceMatches(src string) bool {
 	return m.sourceFilter == "" || m.sourceFilter == src
 }
 
+func (m Model) switchSource(source string) (tea.Model, tea.Cmd) {
+	m.cancelDirectories()
+	m.sourceFilter = source
+	m.applyFilter()
+	m.cursor, m.offset = 0, 0
+	m.aliasSeq++
+	return m, m.schedulePreview()
+}
+
 // cycleSource uses the same categories as the CLI source flags, without refetching.
 func (m *Model) cycleSource() {
 	sources := []string{"", "ssh", "tmux", "config", "zoxide", "tmuxinator"}
@@ -969,6 +1060,9 @@ func (m *Model) cycleSource() {
 // filterFor narrows the loaded list for the raw input, dispatching on the sigil
 // it was typed with.
 func (m *Model) filterFor(raw string) []filteredItem {
+	if m.sourceFilter == "dir" {
+		return m.filterSessions(raw)
+	}
 	var filtered []filteredItem
 	if query, ok := m.aliasFilterQuery(raw); ok {
 		filtered = m.filterAliases(query)
@@ -1010,9 +1104,10 @@ func (m *Model) buildRows() {
 // empty, the single target when it is an alias typed exactly, and a fuzzy match
 // otherwise.
 func (m *Model) filterSessions(pattern string) []filteredItem {
+	items := m.activeItems()
 	if pattern == "" {
-		filtered := make([]filteredItem, len(m.allItems))
-		for i, item := range m.allItems {
+		filtered := make([]filteredItem, len(items))
+		for i, item := range items {
 			filtered[i] = filteredItem{item: item}
 		}
 		return filtered
@@ -1029,10 +1124,10 @@ func (m *Model) filterSessions(pattern string) []filteredItem {
 		pattern = normalizeSeparators(pattern)
 	}
 
-	matches := rankMatches(fuzzy.FindFromNoSort(pattern, m.allItems))
+	matches := rankMatches(fuzzy.FindFromNoSort(pattern, items))
 	filtered := make([]filteredItem, len(matches))
 	for i, match := range matches {
-		item := m.allItems[match.Index]
+		item := items[match.Index]
 		filtered[i] = filteredItem{
 			item:           item,
 			matchedIndexes: match.MatchedIndexes,
@@ -1124,6 +1219,10 @@ func (m *Model) scrollToCursor() {
 		return
 	}
 	row := m.rowOf[m.cursor]
+	if m.visibleCount() == 0 {
+		m.offset = row
+		return
+	}
 	if row < m.offset {
 		m.offset = row
 	}
@@ -1139,6 +1238,9 @@ const fallbackVisibleCount = 5
 // visibleCount is how many session rows fit. The picker runs on the alt screen,
 // so it gets every row the terminal has apart from the query and source hint.
 func (m Model) visibleCount() int {
+	if m.bottomInput && m.height > 0 {
+		return max(m.height-headerLines, 0)
+	}
 	available := m.height - headerLines
 	if available < 1 {
 		return fallbackVisibleCount
@@ -1212,6 +1314,9 @@ func (m Model) previewCols() int {
 
 func (m Model) contentWidth() int {
 	w := m.width - m.previewCols()
+	if m.bottomInput && m.width > 0 {
+		return min(max(w, 1), maxListWidth)
+	}
 	if w < 30 {
 		w = minListWidth
 	}
@@ -1224,27 +1329,43 @@ func (m Model) contentWidth() int {
 func (m Model) View() tea.View {
 	var b strings.Builder
 
-	// Filter input
-	b.WriteString("  " + m.filterInput.View())
-	b.WriteString("\n")
-	// The status shares the blank line under the filter, so showing one never
-	// moves the list.
+	input := "  " + m.filterInput.View()
+	var hint string
 	if m.status != "" {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(3)).Render("  " + m.status))
+		hint = lipgloss.NewStyle().Foreground(lipgloss.ANSIColor(3)).Render("  " + m.status)
 	} else {
 		source := strings.ToUpper(m.sourceFilter)
 		if source == "" {
 			source = "ALL"
 		}
-		b.WriteString(lipgloss.NewStyle().Faint(true).Render("  Source: " + source + " · Ctrl-s"))
+		keys := " · Ctrl-s"
+		if m.fzfKeymap {
+			keys += " · Ctrl-a/t/g/x/f sources · Ctrl-d kill · Alt-x remove · Ctrl-o preview · Tab/Shift-Tab · Enter/Esc"
+		}
+		hint = lipgloss.NewStyle().Faint(true).Render("  Source: " + source + keys)
 	}
-	b.WriteString("\n")
+	if m.fzfKeymap && m.width > 0 {
+		width := m.width
+		if !m.bottomInput {
+			width = min(width, m.contentWidth())
+		}
+		hint = clipLines(hint, width, 1)
+	}
+	if !m.bottomInput {
+		b.WriteString(input + "\n" + hint + "\n")
+	}
 
 	visible := m.visibleCount()
 
-	if m.loading {
+	if visible == 0 {
+		// Tiny bottom layouts reserve their only rows for the input and hint.
+	} else if m.listLoading() {
 		loadingStyle := lipgloss.NewStyle().Faint(true)
-		b.WriteString(loadingStyle.Render("  Loading sessions..."))
+		message := "  Loading sessions..."
+		if m.sourceFilter == "dir" {
+			message = "  Loading directories..."
+		}
+		b.WriteString(loadingStyle.Render(message))
 		b.WriteString("\n")
 		// Pad remaining visible lines to prevent layout jump
 		for i := 1; i < visible; i++ {
@@ -1325,13 +1446,32 @@ func (m Model) View() tea.View {
 	// exactly the height of the terminal, and makes both halves of a split the
 	// same height so the divider spans the whole block.
 	content := strings.TrimSuffix(b.String(), "\n")
+	if m.bottomInput {
+		content = clipLines(content, m.contentWidth(), visible)
+	}
 
-	if cols := m.previewCols(); cols > 0 {
+	if cols := m.previewCols(); cols > 0 && visible > 0 {
 		list := lipgloss.NewStyle().
 			Width(m.contentWidth()).
 			MaxWidth(m.contentWidth()).
 			Render(content)
 		content = lipgloss.JoinHorizontal(lipgloss.Top, list, m.previewView(cols, visible))
+	}
+	if m.bottomInput {
+		width := m.width
+		if width <= 0 {
+			width = m.contentWidth()
+		}
+		if visible > 0 {
+			content += "\n"
+		}
+		if m.height != 1 {
+			content += clipLines(hint, width, 1) + "\n"
+		}
+		if width < 2+lipgloss.Width(m.filterInput.Prompt)+2 {
+			input = ansi.Cut(input, max(0, lipgloss.Width(input)-width), lipgloss.Width(input))
+		}
+		content += clipLines(input, width, 1)
 	}
 
 	if m.confirm != nil {
@@ -1396,14 +1536,18 @@ func (m Model) previewView(cols, rows int) string {
 	body = clipLines(body, cols-m.previewChrome(), rows)
 
 	border, drawn := previewBorderStyle(m.previewBorderName)
+	topPadding := headerLines
+	if m.bottomInput {
+		topPadding = 0
+	}
 
 	return lipgloss.NewStyle().
 		Border(border, false, false, false, drawn).
 		BorderForeground(lipgloss.ANSIColor(8)).
 		PaddingLeft(previewPadding).
-		PaddingTop(headerLines).
+		PaddingTop(topPadding).
 		Width(cols).
-		Height(headerLines + rows).
+		Height(topPadding + rows).
 		Render(body)
 }
 
@@ -1478,6 +1622,9 @@ func elisionLabel(hidden int) string {
 func rowLabel(item filteredItem, showIcons bool) (string, []int, bool) {
 	name, indexes := item.item.name, item.matchedIndexes
 	if item.item.src != "ssh" {
+		if item.item.src == "dir" {
+			name = sanitizeRowText(name)
+		}
 		return name, indexes, false
 	}
 	sourceMatch := false
@@ -1523,12 +1670,16 @@ func rowLabel(item filteredItem, showIcons bool) (string, []int, bool) {
 		}
 		name, indexes = host+model.SessionNameSeparator+session, mapped
 	}
+	return sanitizeRowText(name), indexes, sourceMatch
+}
+
+func sanitizeRowText(name string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return unicode.ReplacementChar
 		}
 		return r
-	}, name), indexes, sourceMatch
+	}, name)
 }
 
 func highlightMatches(s string, indexes []int, matchStyle, normalStyle lipgloss.Style) string {
@@ -1570,4 +1721,4 @@ func (m Model) Chosen() string                   { return m.chosen.Name }
 func (m Model) ChosenSession() model.SeshSession { return m.chosen }
 func (m Model) Quit() bool                       { return m.quit }
 func (m Model) LoadErr() error                   { return m.loadErr }
-func (m Model) Loading() bool                    { return m.loading }
+func (m Model) Loading() bool                    { return m.listLoading() }

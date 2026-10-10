@@ -128,6 +128,12 @@ func (c *RealConfigurator) applyDefaults(config *model.Config) {
 	if config.TUI.Placeholder == "" {
 		config.TUI.Placeholder = "Filter Sessions..."
 	}
+	if config.TUI.InputPosition == "" {
+		config.TUI.InputPosition = "top"
+	}
+	if config.TUI.Keymap == "" {
+		config.TUI.Keymap = "default"
+	}
 	if config.TUI.AliasAutoConnectDelay == "" {
 		config.TUI.AliasAutoConnectDelay = model.DefaultAliasAutoConnectDelay
 	}
@@ -135,6 +141,16 @@ func (c *RealConfigurator) applyDefaults(config *model.Config) {
 		prefix := model.DefaultAliasFilterPrefix
 		config.TUI.AliasFilterPrefix = &prefix
 	}
+}
+
+func validatePickerLayout(config *model.Config) error {
+	if position := config.TUI.InputPosition; position != "top" && position != "bottom" {
+		return fmt.Errorf("invalid input_position %q: must be top or bottom", position)
+	}
+	if keymap := config.TUI.Keymap; keymap != "default" && keymap != "fzf" {
+		return fmt.Errorf("invalid keymap %q: must be default or fzf", keymap)
+	}
+	return nil
 }
 
 // validateAliases rejects alias configurations that can't behave predictably.
@@ -224,6 +240,9 @@ func (c *RealConfigurator) getConfigFileFromPath(configPath string) (model.Confi
 	}
 
 	c.applyDefaults(&config)
+	if err := validatePickerLayout(&config); err != nil {
+		return config, err
+	}
 	if err := validateSSHHosts(&config); err != nil {
 		return config, err
 	}
@@ -265,6 +284,9 @@ func (c *RealConfigurator) getConfigFileFromUserConfigDir() (model.Config, error
 	}
 
 	c.applyDefaults(&config)
+	if err := validatePickerLayout(&config); err != nil {
+		return config, err
+	}
 	if err := validateSSHHosts(&config); err != nil {
 		return config, err
 	}

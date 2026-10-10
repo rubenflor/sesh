@@ -60,12 +60,18 @@ type entryRemovedMsg struct {
 	err    error
 }
 
-// startRemove handles ctrl+x: it opens the confirmation dialog for the
-// highlighted row, or explains why it can't. It is unavailable while the list
-// is still loading — there is nothing highlighted to act on — and on any row
-// that is neither a live tmux session nor a frecency entry.
+// startSourceRemoval restricts each destructive fzf shortcut to its own source.
+func (m Model) startSourceRemoval(source string) (tea.Model, tea.Cmd) {
+	if session, ok := m.highlightedSession(); !ok || session.Src != source {
+		m.status = "This shortcut only removes " + source + " entries"
+		return m, nil
+	}
+	return m.startRemove()
+}
+
+// startRemove opens the existing dialog for a local tmux or frecency row.
 func (m Model) startRemove() (tea.Model, tea.Cmd) {
-	if m.loading {
+	if m.listLoading() {
 		return m, nil
 	}
 	if m.cursor < 0 || m.cursor >= len(m.filtered) {
@@ -97,6 +103,11 @@ func (m Model) actionFor(src string) (confirmAction, bool) {
 // key: the filter input keeps its value but sees nothing typed, so the list is
 // exactly as it was when the dialog closes either way.
 func (m Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.bottomInput && (m.width < 15 || m.height < 3) {
+		if key := msg.String(); key == "enter" || key == "y" || key == "Y" {
+			return m, nil // Do not confirm when the terminal cannot display the choices.
+		}
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		// ctrl+c means "get me out of here" everywhere else in the picker, and
@@ -104,6 +115,7 @@ func (m Model) updateConfirm(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.confirm = nil
 		m.quit = true
 		m.cancelPreview()
+		m.cancelDirectories()
 		return m, tea.Quit
 	case "y", "Y":
 		return m.applyConfirm(true)
@@ -214,11 +226,24 @@ func (m Model) confirmView() string {
 	}
 	lines = append(lines, "", center.Render(confirmButtons(c.yes)))
 
-	return lipgloss.NewStyle().
+	dialog := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.ANSIColor(4)).
 		Padding(1, 2).
 		Render(strings.Join(lines, "\n"))
+	if m.bottomInput && m.width > 0 && m.height > 0 &&
+		(lipgloss.Width(dialog) > m.width || lipgloss.Height(dialog) > m.height) {
+		if m.width < 15 || m.height < 3 {
+			return clipLines("Resize to confirm (Esc cancels)", m.width, m.height)
+		}
+		prompt := "Remove from zoxide?"
+		if c.action == actionKill {
+			prompt = "Kill tmux session?"
+		}
+		compact := lipgloss.NewStyle().Width(m.width).MaxWidth(m.width).Align(lipgloss.Center)
+		return compact.Render(strings.Join([]string{truncate(prompt, m.width), truncate(c.name, m.width), confirmButtons(c.yes)}, "\n"))
+	}
+	return dialog
 }
 
 // confirmPrompt is the question the dialog asks, which has to name what is

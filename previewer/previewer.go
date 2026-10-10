@@ -2,6 +2,8 @@ package previewer
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 
 	"github.com/joshmedeski/sesh/v2/dir"
 	"github.com/joshmedeski/sesh/v2/home"
@@ -22,9 +24,15 @@ type ContextPreviewer interface {
 	PreviewContext(context.Context, string) (string, error)
 }
 
+// LiteralDirectoryPreviewer previews an absolute path without name resolution.
+type LiteralDirectoryPreviewer interface {
+	PreviewDirectory(path string) (string, error)
+}
+
 type RealPreviewer struct {
 	icon       icon.Icon
 	strategies []PreviewStrategy
+	directory  *DirectoryPreviewStrategy
 }
 
 func NewPreviewer(
@@ -37,18 +45,27 @@ func NewPreviewer(
 	config model.Config,
 	shell shell.Shell,
 ) Previewer {
+	directory := NewDirectoryStrategy(home, dir, ls)
 	strategies := []PreviewStrategy{
 		NewSSHStrategy(config, shell),
 		NewTmuxStrategy(lister, tmux),
 		NewConfigStrategy(lister, shell),
 		NewDefaultConfigStrategy(lister, config, ls),
-		NewDirectoryStrategy(home, dir, ls),
+		directory,
 	}
 
 	return &RealPreviewer{
 		icon:       icon,
 		strategies: strategies,
+		directory:  directory,
 	}
+}
+
+func (p *RealPreviewer) PreviewDirectory(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", errors.New("directory preview requires an absolute path")
+	}
+	return p.directory.executePath(path)
 }
 
 func (p *RealPreviewer) Preview(name string) (string, error) {
