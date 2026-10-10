@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -94,7 +95,12 @@ func NewPreviewCommand(base *BaseDeps) *cobra.Command {
 				return errors.New("preview interval must be greater than zero")
 			}
 
-			session, sessionExists := deps.Lister.FindTmuxSession(deps.Icon.RemoveIcon(name))
+			trimmedName := deps.Icon.RemoveIcon(name)
+			if strings.HasPrefix(trimmedName, "ssh/") {
+				return writePreview(cmd.OutOrStdout(), preview, name)
+			}
+
+			session, sessionExists := deps.Lister.FindTmuxSession(trimmedName)
 			if !sessionExists {
 				return writePreview(cmd.OutOrStdout(), preview, name)
 			}
