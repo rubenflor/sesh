@@ -24,6 +24,17 @@ import (
 )
 
 func TestSSHWindowProcessCleanup(t *testing.T) {
+	testSSHInventoryProcessCleanup(t, func(ctx context.Context, sh shell.Shell) error {
+		windows, err := tmux.ListSSHWindows(ctx, model.Config{SSH: model.SSHConfig{Hosts: []string{"dev"}}}, sh, "ssh/dev/work")
+		if windows != nil {
+			return errors.New("failed process returned authoritative windows")
+		}
+		return err
+	})
+}
+
+func testSSHInventoryProcessCleanup(t *testing.T, observe func(context.Context, shell.Shell) error) {
+	t.Helper()
 	for _, mode := range []string{"connecting cancel", "inventory cancel", "parent deadline", "stdout overflow", "stderr overflow"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
@@ -48,11 +59,7 @@ func TestSSHWindowProcessCleanup(t *testing.T) {
 			})
 			done := make(chan error, 1)
 			go func() {
-				windows, err := tmux.ListSSHWindows(ctx, model.Config{SSH: model.SSHConfig{Hosts: []string{"dev"}}}, shell.NewShell(execwrap.NewExec(), nil), "ssh/dev/work")
-				if windows != nil {
-					err = errors.New("failed process returned authoritative windows")
-				}
-				done <- err
+				done <- observe(ctx, shell.NewShell(execwrap.NewExec(), nil))
 			}()
 			require.Eventually(t, func() bool {
 				for _, file := range []string{"parent", "child"} {

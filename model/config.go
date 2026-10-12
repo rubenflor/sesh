@@ -66,10 +66,17 @@ type (
 		Frecency                FrecencyConfig       `toml:"frecency"`
 		TUI                     TUIConfig            `toml:"tui"`
 	}
-	// SSHConfig lists the explicit OpenSSH destination aliases Sesh may probe.
+	// SSHConfig declares allowed hosts and already-provisioned device sessions.
 	// It is read from the root configuration and is not merged from imports.
 	SSHConfig struct {
-		Hosts []string `toml:"hosts"`
+		Hosts          []string           `toml:"hosts"`
+		DeviceSessions []SSHDeviceSession `toml:"device_sessions"`
+	}
+	// SSHDeviceSession describes already-provisioned remote sessions, not a
+	// request to create them or substitute one canonical identity for another.
+	SSHDeviceSession struct {
+		Original string `toml:"original"`
+		Session  string `toml:"session"`
 	}
 	Evaluation struct {
 		StrictMode bool `toml:"strict_mode"`

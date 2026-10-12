@@ -246,6 +246,9 @@ func (c *RealConfigurator) getConfigFileFromPath(configPath string) (model.Confi
 	if err := validateSSHHosts(&config); err != nil {
 		return config, err
 	}
+	if err := model.ValidateSSHDeviceSessions(config.SSH); err != nil {
+		return config, err
+	}
 	if err := validateAliases(&config); err != nil {
 		return config, err
 	}
@@ -288,6 +291,9 @@ func (c *RealConfigurator) getConfigFileFromUserConfigDir() (model.Config, error
 		return config, err
 	}
 	if err := validateSSHHosts(&config); err != nil {
+		return config, err
+	}
+	if err := model.ValidateSSHDeviceSessions(config.SSH); err != nil {
 		return config, err
 	}
 	if err := validateAliases(&config); err != nil {

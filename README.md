@@ -746,6 +746,86 @@ deadline, 1 MiB stdout / 4 KiB stderr limits, and no remote server startup.
 The commands only enumerate native state; custom tmux after/error hooks can
 still cause indirect effects. Sesh does not disable or modify those hooks.
 
+#### Persistent per-device grouped sessions
+
+Optionally declare an already-provisioned device session in the main config:
+
+```toml
+[ssh]
+hosts = ["myinventa"]
+
+[[ssh.device_sessions]]
+original = "ssh/myinventa/1"
+session = "ssh/myinventa/1-macbook"
+```
+
+This is local-device configuration, not a provisioning request. Both fields
+must be nonempty canonical identities for different sessions on the same
+configured host. A session identity may appear in only one mapping, in either
+role: duplicates, reused originals/device sessions and overlapping roles are
+rejected. Identities are preserved exactly, including encoded components;
+mappings, like SSH hosts, are not merged from imported files. Without mappings,
+existing behavior is unchanged.
+
+The original and device session are expected to exist in the same remote tmux
+session group. Group members share windows, panes, layouts and applications,
+but each session has its own current window. Use separate sessions for clients
+that need independent window selection. The real identity of this device view
+is `ssh/myinventa/1-macbook`; Sesh never silently substitutes it for
+`ssh/myinventa/1`, or hides it by a naming prefix.
+
+There is an explicit internal Go relation validator, **no public validation
+command**. It is not run at startup or by listing, preview or session connect.
+It verifies exact literal names/native IDs, a common nonempty group and the
+complete native window/index link sets. Different current windows are valid.
+Its result describes a consistent observation, not authorization for a later
+connection, a server-generation UUID or stale-selection protection. It uses
+the same five-second SSH deadline, 1 MiB stdout / 4 KiB stderr limits and
+cancellation cleanup as window discovery; user-defined hooks retain the same
+indirect-effect limitation. Remote window connection is still unsupported.
+
+Provisioning/removal is a separate, explicitly approved administrative action.
+Before grouping, require the destination name to be absent, global
+`destroy-unattached=off`, and effective `off` on **every** existing affected
+group member (including session-local overrides). Review relevant global/local
+hooks and the bootstrap default-command/shell behavior; inventory commands may
+themselves invoke hooks. Recheck in a controlled administrative window.
+Incompatible retention policies require refusal, not automatic option changes.
+Do not use `new-session -A` to adopt an existing name or change global options.
+
+Native grouped `new-session` creates a transient bootstrap window, pane, PTY
+and process before replacing its links with the group's windows. Shell startup
+and hooks can have effects; provisioning is not mutation-free or an atomic
+transaction. A missing `-t` can be treated as a group name, so fresh exact
+original/group checks and postchecks are essential.
+
+Example of the separately approved **creation step only**, run on the intended
+remote server after those checks. `ORIGINAL_ID` must already hold the freshly
+verified original native session ID; never infer it from its display name.
+`1-macbook` is a fixed literal name without tmux format syntax. Check all exit
+statuses; unexpected/partial state requires admin inspection, not auto-repair:
+
+```sh
+DEVICE_ID="$(tmux -N new-session -d -P -F '#{session_id}' \
+  -s '1-macbook' -t "$ORIGINAL_ID")" || exit 1
+case "$DEVICE_ID" in '$'*) DEVICE_NUMBER="${DEVICE_ID#\$}" ;; *) exit 1 ;; esac
+case "$DEVICE_NUMBER" in ''|*[!0-9]*) exit 1 ;; esac
+test "$DEVICE_ID" != "$ORIGINAL_ID" || exit 1
+DEVICE_NAME="$(tmux -N display-message -p -t "${DEVICE_ID}:" '#{session_name}')" || exit 1
+test "$DEVICE_NAME" = '1-macbook' || exit 1
+ORIGINAL_GROUP="$(tmux -N display-message -p -t "${ORIGINAL_ID}:" '#{session_group}x')" || exit 1
+DEVICE_GROUP="$(tmux -N display-message -p -t "${DEVICE_ID}:" '#{session_group}x')" || exit 1
+test "$DEVICE_GROUP" != x && test "$DEVICE_GROUP" = "$ORIGINAL_GROUP" || exit 1
+tmux -N set-option -t "$DEVICE_ID" destroy-unattached off
+```
+
+Verify the returned ID's exact name, group, window links and effective retention,
+and that the original's current window is unchanged. Pinning the new session's
+local `off` is safe only after the compatible global/member preconditions;
+it is not a way to fix unsafe creation defaults afterward. Persistent sessions
+remain after detach, SSH failure or picker exit. There is no automatic repair,
+deletion, orphan collection, expiration or cleanup daemon; removal is admin-only.
+
 Connecting creates or reuses an internal local tmux bridge whose pane runs
 OpenSSH and attaches to remote tmux. A local tmux-compatible executable is
 required. If `tmux_command` is configured, that executable must support the

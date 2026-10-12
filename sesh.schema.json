@@ -23,6 +23,31 @@
             "pattern": "\\S"
           },
           "uniqueItems": true
+        },
+        "device_sessions": {
+          "type": "array",
+          "description": "Local declarations of already-provisioned per-device grouped sessions; never create, repair or substitute remote sessions. The loader validates canonical identities, the same configured host, distinct sessions and conflicts across mappings.",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "properties": {
+              "original": {
+                "type": "string",
+                "description": "Canonical identity of the existing original remote session",
+                "pattern": "^ssh/([A-Za-z0-9._~-]|%[0-9A-F]{2})+/([A-Za-z0-9._~-]|%[0-9A-F]{2})+$"
+              },
+              "session": {
+                "type": "string",
+                "description": "Actual canonical identity of the existing device-specific grouped session",
+                "pattern": "^ssh/([A-Za-z0-9._~-]|%[0-9A-F]{2})+/([A-Za-z0-9._~-]|%[0-9A-F]{2})+$"
+              }
+            },
+            "required": [
+              "original",
+              "session"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

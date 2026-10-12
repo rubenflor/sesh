@@ -52,8 +52,24 @@ func ListSSHWindows(ctx context.Context, config model.Config, sh shell.Shell, id
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// Compare stored vis spelling literally; only verified native IDs become targets.
-	remote := "wanted=" + shell.Quote(model.TmuxSSHSessionTarget(session)) + `
+	remote := sshSessionLookupScript(session) + `
+tmux -N -u display-message -p -t "${target}:" ` + shell.Quote(sshWindowMetadataFormat("B")) + ` || exit $?
+tmux -N -u list-windows -t "$target" -F ` + shell.Quote(sshWindowSchema.format()) + ` || exit $?
+exec tmux -N -u display-message -p -t "${target}:" ` + shell.Quote(sshWindowMetadataFormat("E")) + "\n"
+	output, err := captureSSHInventory(ctx, sh, host, remote, "remote tmux window command failed")
+	if err != nil {
+		return nil, err
+	}
+	windows, err := parseSSHWindows(string(output), identity, session)
+	if err != nil {
+		return nil, fmt.Errorf("SSH %q: invalid window inventory: %w", host, err)
+	}
+	return windows, nil
+}
+
+// Compare stored vis spelling literally; only verified native IDs become targets.
+func sshSessionLookupScript(session string) string {
+	return "wanted=" + shell.Quote(model.TmuxSSHSessionTarget(session)) + `
 set -f
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 ids=$(tmux -N -u list-sessions -F '#{session_id}') || exit $?
@@ -73,9 +89,10 @@ for id in $ids; do
     fi
 done
 [ -n "$target" ] || fail 'remote tmux session not found'
-tmux -N -u display-message -p -t "${target}:" ` + shell.Quote(sshWindowMetadataFormat("B")) + ` || exit $?
-tmux -N -u list-windows -t "$target" -F ` + shell.Quote(sshWindowSchema.format()) + ` || exit $?
-exec tmux -N -u display-message -p -t "${target}:" ` + shell.Quote(sshWindowMetadataFormat("E")) + "\n"
+`
+}
+
+func captureSSHInventory(ctx context.Context, sh shell.Shell, host, remote, failure string) ([]byte, error) {
 	result, err := sh.CmdCaptureRaw(ctx, "ssh", sshWindowBytes, sshWindowStderr,
 		"-T", "-n", "-o", "BatchMode=yes", "--", host, "/bin/sh -c "+shell.Quote(remote))
 	if ctx.Err() != nil {
@@ -90,15 +107,11 @@ exec tmux -N -u display-message -p -t "${target}:" ` + shell.Quote(sshWindowMeta
 	if result.ExitCode != 0 {
 		message := strings.TrimSpace(string(result.Stderr))
 		if message == "" {
-			message = "remote tmux window command failed"
+			message = failure
 		}
 		return nil, fmt.Errorf("SSH %q: %s (status %d)", host, message, result.ExitCode)
 	}
-	windows, err := parseSSHWindows(string(result.Stdout), identity, session)
-	if err != nil {
-		return nil, fmt.Errorf("SSH %q: invalid window inventory: %w", host, err)
-	}
-	return windows, nil
+	return result.Stdout, nil
 }
 
 func parseSSHWindows(output, identity, session string) ([]model.SSHWindow, error) {
