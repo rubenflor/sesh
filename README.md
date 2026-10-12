@@ -717,13 +717,34 @@ sesh preview ssh/dev/work    # one-shot remote pane preview
 sesh connect ssh/dev/work    # attach to the existing remote session "work"
 ```
 
-Remote JSON rows have `Src = "ssh"`, an empty `Path`, and a canonical `Name`
+Remote session JSON rows have `Src = "ssh"`, an empty `Path`, and a canonical `Name`
 of `ssh/<encoded-host>/<encoded-session>`. Components use UTF-8 percent encoding
 with uppercase hex; for example, session `team/work` on `dev` becomes
 `ssh/dev/team%2Fwork`. Pass the returned `Name` unchanged to `sesh connect`,
 including from external pickers or Raycast. SSH v1 attaches only to existing
 remote tmux sessions; it does not create them or run remote startup commands.
 `connect --command` and `connect --root` are unsupported for SSH targets.
+
+List windows in one configured remote session without attaching or creating a
+bridge:
+
+```sh
+sesh window list --json --target 'ssh/dev/work'
+```
+
+Remote window rows retain `Name`, `Path`, `Index`, and `Active`, and add `Src`,
+the canonical parent `Session`, native `SessionID` and window `ID`, and an
+advisory `ServerFingerprint` (remote PID, start time, socket path). IDs are scoped
+to that server lifetime; the fingerprint is not a guaranteed generation UUID or
+a connection token. Repeated links to one window retain their distinct indices.
+Names retain the remote tmux format's stored vis spelling;
+paths are remote metadata, not local filesystem targets. Local window JSON is
+unchanged. Remote **window connection remains unsupported**.
+
+Window discovery is a single non-interactive SSH request with a five-second
+deadline, 1 MiB stdout / 4 KiB stderr limits, and no remote server startup.
+The commands only enumerate native state; custom tmux after/error hooks can
+still cause indirect effects. Sesh does not disable or modify those hooks.
 
 Connecting creates or reuses an internal local tmux bridge whose pane runs
 OpenSSH and attaches to remote tmux. A local tmux-compatible executable is

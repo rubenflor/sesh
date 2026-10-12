@@ -62,7 +62,7 @@ func newWindowListCommand(base *BaseDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"l", "ls"},
-		Short:   "List the windows of a tmux session",
+		Short:   "List the windows of a local or configured SSH tmux session",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return listWindows(cmd, base)
@@ -105,6 +105,26 @@ func listWindows(cmd *cobra.Command, base *BaseDeps) error {
 	deps, err := buildDeps(cmd, base)
 	if err != nil {
 		return err
+	}
+	if target := targetFlag(cmd); strings.HasPrefix(target, "ssh/") {
+		windows, err := tmux.ListSSHWindows(cmd.Context(), deps.Config, deps.Shell, target)
+		if err != nil {
+			return err
+		}
+		if jsonOutput, _ := cmd.Flags().GetBool("json"); jsonOutput {
+			out, err := json.Marshal(windows)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			return err
+		}
+		for _, window := range windows {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), window.Name); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	targetSession, generation, err := windowSessionID(deps, targetFlag(cmd))
